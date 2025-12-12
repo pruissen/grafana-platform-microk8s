@@ -1,0 +1,20 @@
+# Terraform - local state and plugins
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+terraform/crash.log
+
+# Mac / Linux system files
+.DS_Store
+.idea/
+.vscode/
+
+# Temporary / Log files
+*.log
+*.tmp
+
+# In case you accidentally copy the kubeconfig here
+kubeconfig
+config

@@ -1,0 +1,18 @@
+# Enable K6 and Faro visualization
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Mimir
+        type: prometheus
+        url: http://mimir-distributed-query-frontend.observability-prd.svc:8080/prometheus
+      - name: Tempo
+        type: tempo
+        url: http://tempo-distributed-query-frontend.observability-prd.svc:3100
+      - name: Loki
+        type: loki
+        url: http://loki-distributed-query-frontend.observability-prd.svc:3100
+grafana.ini:
+  server:
+    root_url: "%(protocol)s://%(domain)s:%(http_port)s/grafana/"
+    serve_from_sub_path: true

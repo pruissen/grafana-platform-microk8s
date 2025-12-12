@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minio-storage
+  namespace: argocd-system
+spec:
+  project: default
+  source:
+    repoURL: https://charts.min.io/
+    chart: minio
+    targetRevision: 5.0.14
+    helm:
+      parameters:
+        - name: mode
+          value: standalone
+        - name: rootUser
+          value: admin
+        - name: rootPassword
+          value: password123
+        - name: persistence.size
+          value: 10Gi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability-prd
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }

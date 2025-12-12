@@ -1,0 +1,19 @@
+# Simplified Mimir for MicroK8s
+minio:
+  enabled: false # We use the standalone one deployed separately
+mimir:
+  structuredConfig:
+    blocks_storage:
+      s3:
+        endpoint: minio.observability-prd.svc:9000
+        bucket_name: mimir-blocks
+        access_key_id: admin
+        secret_access_key: password123
+        insecure: true
+    alertmanager_storage:
+      s3:
+        endpoint: minio.observability-prd.svc:9000
+        bucket_name: mimir-ruler
+        access_key_id: admin
+        secret_access_key: password123
+        insecure: true
