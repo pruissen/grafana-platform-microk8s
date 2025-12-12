@@ -1,0 +1,27 @@
+fullnameOverride: tempo-distributed
+distributor:
+  replicas: 1
+  config:
+    log_received_traces: true
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: tempo-traces
+      # FIXED: Use the actual service name 'minio-storage'
+      endpoint: minio-storage.observability-prd.svc:9000
+      access_key: admin
+      secret_key: "${s3_secret_key}"
+      insecure: true
+    wal:
+      path: /var/tempo/wal
+# ... (Keep the rest of your file the same)
+ingester: { replicas: 1, persistence: { enabled: true, size: 10Gi }, config: { replication_factor: 1 } }
+compactor: { replicas: 1, config: { compaction: { compaction_window: 1h, max_block_bytes: 1073741824, block_retention: 48h, compacted_block_retention: 1h } } }
+querier: { replicas: 1, config: { frontend_worker: { frontend_address: tempo-distributed-query-frontend:9095 } } }
+queryFrontend: { replicas: 1 }
+memcached: { enabled: false }
+global_overrides: { per_tenant_override_config: /conf/overrides.yaml, metrics_generator_processors: [service-graphs, span-metrics] }
+gateway: { enabled: true, replicas: 1, ingress: { enabled: false } }
+metricsGenerator: { enabled: true, replicas: 1, config: { storage: { remote_write: [{ url: http://mimir-distributor.observability-prd.svc:8080/api/v1/push, send_exemplars: true }] } } }
+serviceMonitor: { enabled: false }

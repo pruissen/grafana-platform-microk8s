@@ -15,6 +15,9 @@ resource "random_password" "grafana_admin_password" {
 # 2. BASE INFRASTRUCTURE
 # -------------------------------------------------------------------
 
+# NOTE: Namespaces are now handled by the Makefile ("create-namespaces" target)
+# to avoid "already exists" errors.
+
 # ArgoCD Installation
 resource "helm_release" "argocd" {
   name             = "argocd"
@@ -63,7 +66,68 @@ resource "kubernetes_secret_v1" "grafana_creds" {
 }
 
 # -------------------------------------------------------------------
-# 4. ARGO CD APPLICATIONS
+# 4. JOB: MinIO Bucket Creator (Fixes "Bucket not found" errors)
+# -------------------------------------------------------------------
+resource "kubectl_manifest" "bucket_creator" {
+  # Ensures Secret exists before Job starts
+  depends_on = [kubernetes_secret_v1.minio_creds]
+  
+  yaml_body = yamlencode({
+    apiVersion = "batch/v1"
+    kind       = "Job"
+    metadata = {
+      name      = "minio-bucket-creator"
+      namespace = "observability-prd"
+    }
+    spec = {
+      ttlSecondsAfterFinished = 300 # Auto-delete pod 5 mins after success
+      template = {
+        spec = {
+          restartPolicy = "OnFailure"
+          containers = [{
+            name  = "create-buckets"
+            image = "minio/mc:latest"
+            env = [
+              {
+                name = "MINIO_ROOT_PASSWORD"
+                valueFrom = {
+                  secretKeyRef = {
+                    name = "minio-creds"
+                    key  = "rootPassword"
+                  }
+                }
+              }
+            ]
+            command = ["/bin/sh", "-c"]
+            # 1. Wait for MinIO service to be reachable
+            # 2. Configure 'mc' client
+            # 3. Create required buckets
+            args = [
+              <<-EOT
+              echo "Waiting for MinIO Service..."
+              until mc alias set myminio http://minio-storage.observability-prd.svc:9000 admin $MINIO_ROOT_PASSWORD; do
+                echo "MinIO not ready, retrying..."
+                sleep 5
+              done
+              
+              echo "Creating Buckets..."
+              mc mb myminio/mimir-blocks --ignore-existing
+              mc mb myminio/mimir-ruler  --ignore-existing
+              mc mb myminio/tempo-traces --ignore-existing
+              mc mb myminio/loki-data    --ignore-existing
+              
+              echo "✅ Buckets Created Successfully."
+              EOT
+            ]
+          }]
+        }
+      }
+    }
+  })
+}
+
+# -------------------------------------------------------------------
+# 5. ARGO CD APPLICATIONS
 # -------------------------------------------------------------------
 
 # APP 1: MinIO
@@ -92,9 +156,10 @@ resource "kubectl_manifest" "minio" {
   })
 }
 
-# APP 2: Mimir
+# APP 2: Mimir (Metrics)
 resource "kubectl_manifest" "mimir" {
-  depends_on = [kubectl_manifest.minio]
+  # Wait for buckets to be created
+  depends_on = [kubectl_manifest.minio, kubectl_manifest.bucket_creator]
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1", kind = "Application"
     metadata = { name = "mimir", namespace = "argocd-system" }
@@ -116,9 +181,9 @@ resource "kubectl_manifest" "mimir" {
   })
 }
 
-# APP 3: Tempo
+# APP 3: Tempo (Traces)
 resource "kubectl_manifest" "tempo" {
-  depends_on = [kubectl_manifest.minio]
+  depends_on = [kubectl_manifest.minio, kubectl_manifest.bucket_creator]
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1", kind = "Application"
     metadata = { name = "tempo", namespace = "argocd-system" }
@@ -140,7 +205,7 @@ resource "kubectl_manifest" "tempo" {
   })
 }
 
-# APP 4: Loki
+# APP 4: Loki (Logs)
 resource "kubectl_manifest" "loki" {
   depends_on = [helm_release.argocd]
   yaml_body = yamlencode({
@@ -159,7 +224,7 @@ resource "kubectl_manifest" "loki" {
   })
 }
 
-# APP 5: Grafana
+# APP 5: Grafana (UI)
 resource "kubectl_manifest" "grafana" {
   depends_on = [kubectl_manifest.mimir, kubectl_manifest.tempo, kubernetes_secret_v1.grafana_creds]
   yaml_body = yamlencode({
@@ -186,7 +251,7 @@ resource "kubectl_manifest" "grafana" {
   })
 }
 
-# APP 6: Grafana Alloy (Replaces OTel Collector)
+# APP 6: Grafana Alloy (Telemetry Collector)
 resource "kubectl_manifest" "alloy" {
   depends_on = [kubectl_manifest.mimir, kubectl_manifest.tempo]
   yaml_body = yamlencode({
@@ -208,7 +273,7 @@ resource "kubectl_manifest" "alloy" {
   })
 }
 
-# APP 7: Astronomy Shop Demo
+# APP 7: Astronomy Shop (Demo Application)
 resource "kubectl_manifest" "astronomy" {
   depends_on = [kubectl_manifest.alloy]
   yaml_body = yamlencode({
@@ -222,10 +287,12 @@ resource "kubectl_manifest" "astronomy" {
         targetRevision = "0.26.0"
         helm = {
           parameters = [
+            # Disable built-in observability tools
             { name = "opentelemetry-collector.enabled", value = "false" },
             { name = "jaeger.enabled", value = "false" },
             { name = "prometheus.enabled", value = "false" },
             { name = "grafana.enabled", value = "false" },
+            # Point to Grafana Alloy service
             { name = "default.env.OTEL_EXPORTER_OTLP_ENDPOINT", value = "http://alloy.observability-prd.svc:4317" }
           ]
         }

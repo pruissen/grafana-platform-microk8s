@@ -1,0 +1,57 @@
+controller:
+  type: deployment
+  replicas: 1
+
+alloy:
+  config: |
+    otelcol.receiver.otlp "default" {
+      grpc { endpoint = "0.0.0.0:4317" }
+      http { endpoint = "0.0.0.0:4318" }
+      output {
+        metrics = [otelcol.processor.batch.default.input]
+        logs    = [otelcol.processor.batch.default.input]
+        traces  = [otelcol.processor.batch.default.input]
+      }
+    }
+
+    otelcol.processor.batch "default" {
+      output {
+        metrics = [otelcol.processor.k8sattributes.default.input]
+        logs    = [otelcol.processor.k8sattributes.default.input]
+        traces  = [otelcol.processor.k8sattributes.default.input]
+      }
+    }
+
+    otelcol.processor.k8sattributes "default" {
+      extract {
+        metadata = ["k8s.pod.name", "k8s.pod.uid", "k8s.deployment.name", "k8s.namespace.name"]
+      }
+      passthrough = false
+      auth_type   = "serviceAccount"
+      output {
+        metrics = [prometheus.remote_write.mimir.input]
+        logs    = [loki.write.loki.input]
+        traces  = [otelcol.exporter.otlp.tempo.input]
+      }
+    }
+
+    // Metrics -> Mimir (Service is 'mimir-distributor')
+    prometheus.remote_write "mimir" {
+      endpoint {
+        url = "http://mimir-distributor.observability-prd.svc:8080/api/v1/push"
+      }
+    }
+
+    // Logs -> Loki (Service is simply 'loki')
+    loki.write "loki" {
+      endpoint {
+        url = "http://loki.observability-prd.svc:3100/loki/api/v1/push"
+      }
+    }
+
+    otelcol.exporter.otlp "tempo" {
+      client {
+        endpoint = "tempo-distributed-distributor.observability-prd.svc:4317"
+        tls { insecure = true }
+      }
+    }

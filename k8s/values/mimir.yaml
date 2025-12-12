@@ -1,0 +1,20 @@
+minio:
+  enabled: false
+mimir:
+  structuredConfig:
+    blocks_storage:
+      s3:
+        # FIXED: Use the actual service name 'minio-storage'
+        endpoint: minio-storage.observability-prd.svc:9000
+        bucket_name: mimir-blocks
+        access_key_id: admin
+        secret_access_key: "${s3_secret_key}"
+        insecure: true
+    alertmanager_storage:
+      s3:
+        # FIXED: Use the actual service name 'minio-storage'
+        endpoint: minio-storage.observability-prd.svc:9000
+        bucket_name: mimir-ruler
+        access_key_id: admin
+        secret_access_key: "${s3_secret_key}"
+        insecure: true
