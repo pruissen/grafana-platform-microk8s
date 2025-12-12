@@ -1,21 +1,52 @@
-# Platform Engineering Lab: Grafana Enterprise Stack on MicroK8s
+# Secure Platform Engineering Lab with Grafana Alloy
 
-This project creates a local Multi-tenant Observability Platform using MicroK8s, ArgoCD, and the Grafana Stack (Mimir, Loki, Tempo, Grafana, Faro).
+This setup creates a MicroK8s cluster with a complete Grafana Observability Stack (LGTM), replacing the OpenTelemetry Collector with **Grafana Alloy**.
 
 ## Components
-- **Orchestration**: MicroK8s (Local K8s)
-- **GitOps**: ArgoCD
-- **Observability**: Grafana LGTM Stack (Distributed Mode) + K6 + Faro
-- **Telemetry**: OpenTelemetry Collectors (Gateway + DaemonSet)
-- **Demo App**: OpenTelemetry Astronomy Shop
+* **Orchestration**: MicroK8s
+* **GitOps**: ArgoCD
+* **Metric Store**: Mimir (Distributed)
+* **Log Store**: Loki
+* **Trace Store**: Tempo (Distributed)
+* **Visuals**: Grafana
+* **Telemetry**: Grafana Alloy (Collector)
+* **Demo App**: OTel Astronomy Shop
 
 ## Prerequisites
-- Ubuntu/Linux environment
-- `git`, `make`, `curl`, `screen` installed.
-- **Important**: You must manually initialize this folder as a git repository and commit the files before running the installation.
+* Ubuntu/Linux
+* `make`, `git`, `curl`, `screen`
+* No existing MicroK8s installation (or run `make remove-microk8s` first)
 
-## Quick Start
+## Installation Guide
 
-1. **Launch Everything**:
-   ```bash
-   make all
+1.  **Install MicroK8s**:
+    ```bash
+    make install-microk8s
+    ```
+
+2.  **Install ArgoCD**:
+    ```bash
+    make install-argocd
+    ```
+
+3.  **Install Observability Stack (Mimir/Tempo/Grafana)**:
+    ```bash
+    make install-observability
+    ```
+    *This will generate secure random passwords for MinIO and Grafana and inject them automatically.*
+
+4.  **Install Alloy & Demo App**:
+    ```bash
+    make install-otel
+    ```
+
+5.  **Access the Environment**:
+    ```bash
+    make forward
+    ```
+    *This will display all URLs and generated passwords.*
+
+## Cleanup
+To destroy Terraform resources:
+```bash
+make clean

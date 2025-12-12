@@ -5,14 +5,14 @@ start() {
     echo "Starting port-forwards in screen session '$SESSION'..."
     screen -dmS $SESSION
     
-    # 1. ArgoCD (Port 8080)
-    screen -S $SESSION -X screen -t argocd bash -c "kubectl port-forward svc/argocd-server -n argocd-system 8080:80; exec bash"
-    
-    # 2. Grafana (Port 3000)
-    screen -S $SESSION -X screen -t grafana bash -c "kubectl port-forward svc/grafana -n observability-prd 3000:80; exec bash"
-
-    # 3. Astronomy Shop (Port 8081)
-    screen -S $SESSION -X screen -t webstore bash -c "kubectl port-forward svc/astronomy-shop-frontend -n astronomy-shop 8081:8080; exec bash"
+    # ArgoCD
+    screen -S $SESSION -X screen -t argocd bash -c "kubectl port-forward --address 0.0.0.0 svc/argocd-server -n argocd-system 8080:80; exec bash"
+    # Grafana
+    screen -S $SESSION -X screen -t grafana bash -c "kubectl port-forward --address 0.0.0.0 svc/grafana -n observability-prd 3000:80; exec bash"
+    # Astronomy Shop
+    screen -S $SESSION -X screen -t webstore bash -c "kubectl port-forward --address 0.0.0.0 svc/astronomy-shop-frontend -n astronomy-shop 8081:8080; exec bash"
+    # Alloy UI (Optional, good for debugging)
+    screen -S $SESSION -X screen -t alloy bash -c "kubectl port-forward --address 0.0.0.0 svc/alloy -n observability-prd 12345:12345; exec bash"
 
     echo "=================================================="
     echo "ACCESS CREDENTIALS"
@@ -23,9 +23,10 @@ start() {
     echo ""
     echo "2. Grafana: http://localhost:3000"
     echo "   User: admin"
-    echo "   Pass: $(kubectl -n observability-prd get secret grafana -o jsonpath="{.data.admin-password}" | base64 -d)"
+    echo "   Pass: $(kubectl -n observability-prd get secret grafana-admin-creds -o jsonpath="{.data.admin-password}" | base64 -d)"
     echo ""
     echo "3. Astronomy Shop: http://localhost:8081"
+    echo "4. Alloy Debug UI: http://localhost:12345"
     echo "=================================================="
     echo "To view logs/screens: screen -r $SESSION"
 }
