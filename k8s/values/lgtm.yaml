@@ -1,0 +1,139 @@
+global:
+  dnsService: "kube-dns"
+
+# --------------------------------------------------------
+# 1. MIMIR
+# --------------------------------------------------------
+mimir:
+  enabled: true
+  minio: { enabled: false }
+  affinity: {} # Single-node support
+  structuredConfig:
+    blocks_storage:
+      s3:
+        endpoint: minio-storage.observability-prd.svc:9000
+        bucket_name: mimir-blocks
+        access_key_id: admin
+        secret_access_key: "${s3_secret_key}"
+        insecure: true
+    alertmanager_storage:
+      s3:
+        endpoint: minio-storage.observability-prd.svc:9000
+        bucket_name: mimir-ruler
+        access_key_id: admin
+        secret_access_key: "${s3_secret_key}"
+        insecure: true
+    memberlist:
+      bind_addr: ["0.0.0.0"]
+      bind_port: 7946
+
+# --------------------------------------------------------
+# 2. TEMPO
+# --------------------------------------------------------
+tempo:
+  enabled: true
+  fullnameOverride: tempo-distributed
+  minio: { enabled: false }
+  # Disable Affinity
+  distributor: { affinity: {} }
+  ingester: { affinity: {} }
+  compactor: { affinity: {} }
+  querier: { affinity: {} }
+  queryFrontend: { affinity: {} }
+  gateway: { affinity: {} }
+  metricsGenerator: { affinity: {} }
+  
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: tempo-traces
+        endpoint: minio-storage.observability-prd.svc:9000
+        access_key: admin
+        secret_key: "${s3_secret_key}"
+        insecure: true
+
+# --------------------------------------------------------
+# 3. LOKI
+# --------------------------------------------------------
+loki:
+  enabled: true
+  minio: { enabled: false }
+  distributor: { affinity: {} }
+  ingester: { affinity: {} }
+  querier: { affinity: {} }
+  queryFrontend: { affinity: {} }
+  loki:
+    structuredConfig:
+      common:
+        storage:
+          s3:
+            endpoint: minio-storage.observability-prd.svc:9000
+            bucketnames: loki-data
+            access_key_id: admin
+            secret_access_key: "${s3_secret_key}"
+            insecure: true
+            s3forcepathstyle: true
+      ruler:
+        storage:
+          s3:
+            bucketnames: loki-ruler
+
+# --------------------------------------------------------
+# 4. GRAFANA ONCALL
+# --------------------------------------------------------
+grafana-oncall:
+  enabled: true
+  base_url: http://localhost:3000/grafana
+  
+  mariadb:
+    enabled: true
+    auth:
+      rootPassword: "${oncall_db_password}"
+      password: "${oncall_db_password}"
+  rabbitmq:
+    enabled: true
+    auth:
+      password: "${oncall_rabbitmq_password}"
+  redis:
+    enabled: true
+    auth:
+      password: "${oncall_redis_password}"
+
+  # Connect to local Grafana service
+  grafana:
+    url: "http://lgtm-distributed-grafana.observability-prd.svc:80"
+
+# --------------------------------------------------------
+# 5. GRAFANA
+# --------------------------------------------------------
+grafana:
+  enabled: true
+  admin:
+    existingSecret: "grafana-admin-creds"
+    userKey: "admin-user"
+    passwordKey: "admin-password"
+  
+  plugins:
+    - grafana-oncall-app
+    
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s:%(http_port)s/grafana/"
+      serve_from_sub_path: true
+    plugins:
+      allow_loading_unsigned_plugins: "grafana-oncall-app"
+
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Mimir
+          type: prometheus
+          url: http://lgtm-distributed-mimir-query-frontend.observability-prd.svc:8080/prometheus
+        - name: Tempo
+          type: tempo
+          url: http://lgtm-distributed-tempo-query-frontend.observability-prd.svc:3100
+        - name: Loki
+          type: loki
+          url: http://lgtm-distributed-loki-query-frontend.observability-prd.svc:3100
