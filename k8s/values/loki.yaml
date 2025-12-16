@@ -1,24 +1,47 @@
-deploymentMode: SimpleScalable
+# loki-values.yaml
 
+# 1. Enable Single Binary Mode
+deploymentMode: SingleBinary
+
+# 2. Configure Loki for Filesystem Storage (No S3/Object Store)
 loki:
-  auth_enabled: false
   commonConfig:
     replication_factor: 1
   storage:
-    type: s3
-    bucketNames:
-      chunks: loki-data
-      ruler: loki-ruler
-    s3:
-      endpoint: http://minio-enterprise.observability-prd.svc:9000
-      region: us-east-1
-      s3ForcePathStyle: true
-      insecure: true
-      accessKeyId: admin
-      secretAccessKey: "${s3_secret_key}"
+    type: 'filesystem'
+  
+  # The missing piece causing your error:
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
 
-minio: { enabled: false }
+# 3. Configure Single Binary Replicas
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 10Gi
+    # storageClass: standard  # Uncomment and set if you have a specific storage class
 
-backend: { replicas: 1 }
-read: { replicas: 1 }
-write: { replicas: 1 }
+# 4. Disable Ingress (as requested)
+gateway:
+  ingress:
+    enabled: false
+  # If you want to disable the gateway entirely (just use the binary service):
+  # enabled: false
+
+# 5. Disable other modes to be safe (defaults should handle this with deploymentMode)
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+# Use default images (no image overrides needed)
