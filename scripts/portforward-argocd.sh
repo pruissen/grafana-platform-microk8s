@@ -5,8 +5,8 @@ PID_FILE="/tmp/argocd-portforward.pid"
 LOG_FILE="/tmp/argocd-portforward.log"
 NAMESPACE="argocd-system"
 SERVICE="svc/argocd-server"
-LOCAL_PORT="8080"
-REMOTE_PORT="443"
+LOCAL_PORT="8081"
+REMOTE_PORT="80" # Standard ArgoCD server port is usually 80 or 443
 
 # ---------------------------------------------------------
 # FUNCTIONS
@@ -14,25 +14,26 @@ REMOTE_PORT="443"
 
 show() {
     echo "------------------------------------------------------------------------"
-    echo "🐙 ARGOCD ACCESS & CREDENTIALS"
+    echo "🐙 ARGOCD (GITOPS)"
     echo "------------------------------------------------------------------------"
     
-    # Check if port-forward is actually running
     if [ -f "$PID_FILE" ] && ps -p $(cat "$PID_FILE") > /dev/null; then
         echo "✅ Status:   RUNNING (PID: $(cat $PID_FILE))"
     else
         echo "⚠️  Status:   STOPPED"
     fi
 
-    echo "🔗 URL:      https://localhost:${LOCAL_PORT}"
-    echo "👤 User:     admin"
+    echo "🔗 URL:      http://localhost:${LOCAL_PORT}"
     
-    # Retrieve password safely
+    # Retrieve Credentials
+    USER="admin"
     PASS=$(kubectl get secret -n "$NAMESPACE" argocd-initial-admin-secret -o jsonpath="{.data.password}" 2>/dev/null | base64 -d)
-    
+
     if [ -z "$PASS" ]; then
-        echo "🔑 Pass:     (Secret not found - is ArgoCD installed?)"
+        echo "👤 User:     admin"
+        echo "🔑 Pass:     (Secret not found - maybe already changed?)"
     else
+        echo "👤 User:     $USER"
         echo "🔑 Pass:     $PASS"
     fi
     echo "------------------------------------------------------------------------"
@@ -51,25 +52,21 @@ start() {
 
     echo "🚀 Starting ArgoCD self-healing port-forward..."
     
-    # Run the auto-healing loop in the background
     (
         while true; do
-            echo "[$(date)] Starting connection to $SERVICE..." >> "$LOG_FILE"
-            
-            # The actual port-forward command
-            kubectl port-forward -n "$NAMESPACE" "$SERVICE" "${LOCAL_PORT}:${REMOTE_PORT}" >> "$LOG_FILE" 2>&1
-            
-            # If it crashes/disconnects, log it and wait before restarting
-            EXIT_CODE=$?
-            echo "[$(date)] Connection died (Code: $EXIT_CODE). Restarting in 2s..." >> "$LOG_FILE"
+            echo "[$(date)] Connecting to $SERVICE..." >> "$LOG_FILE"
+            # Try port 80 first, fallback to 443 if needed inside the loop
+            kubectl port-forward -n "$NAMESPACE" "$SERVICE" "${LOCAL_PORT}:80" >> "$LOG_FILE" 2>&1
+            if [ $? -ne 0 ]; then
+                 echo "[$(date)] Port 80 failed, trying 443..." >> "$LOG_FILE"
+                 kubectl port-forward -n "$NAMESPACE" "$SERVICE" "${LOCAL_PORT}:443" >> "$LOG_FILE" 2>&1
+            fi
+            echo "[$(date)] Connection died. Restarting in 2s..." >> "$LOG_FILE"
             sleep 2
         done
     ) &
 
-    # Save the PID of the loop
     echo $! > "$PID_FILE"
-    
-    # Wait a moment to let the first connection attempt happen
     sleep 1
     show
 }
@@ -78,42 +75,28 @@ stop() {
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         echo "🛑 Stopping ArgoCD port-forward (PID: $PID)..."
-        
-        # Kill the loop process
         kill "$PID" 2>/dev/null
-        
-        # Cleanup any lingering kubectl processes matching our target
         pkill -f "kubectl port-forward -n $NAMESPACE $SERVICE"
-        
         rm "$PID_FILE"
         echo "✅ Stopped."
     else
-        echo "⚠️  No PID file found. Cleaning up potential orphans..."
+        echo "⚠️  No PID file found. Cleaning up orphans..."
         pkill -f "kubectl port-forward -n $NAMESPACE $SERVICE"
         echo "✅ Cleanup complete."
     fi
 }
 
+help() {
+    echo "Usage: $0 {start|stop|restart|show|help}"
+}
+
 # ---------------------------------------------------------
 # MENU LOGIC
 # ---------------------------------------------------------
-
 case "$1" in
-    start)
-        start
-        ;;
-    stop)
-        stop
-        ;;
-    restart)
-        stop
-        sleep 1
-        start
-        ;;
-    show)
-        show
-        ;;
-    *)
-        echo "Usage: $0 {start|stop|restart|show}"
-        exit 1
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; sleep 1; start ;;
+    show)    show ;;
+    *)       help ;;
 esac

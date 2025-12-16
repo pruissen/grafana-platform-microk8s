@@ -1,26 +1,16 @@
-# -- DASHBOARD COMPATIBILITY FIX --
-# Setting this to null allows the chart to use its default full names 
-# (e.g., mimir-mimir-distributed-ingester), which matches the 
-# default Prometheus job names expected by Grafana dashboards.
-nameOverride: null
+nameOverride: mimir
 
-# Global Credentials
 global:
   extraEnvFrom:
     - secretRef:
         name: mimir-s3-credentials
 
-# ---------------------------------------------------------------------
-# MAIN MIMIR CONFIGURATION
-# ---------------------------------------------------------------------
 mimir:
   image:
     repository: public.ecr.aws/bitnami/grafana-mimir
     tag: latest
 
   structuredConfig:
-    
-    # Common Storage
     common:
       storage:
         backend: s3
@@ -28,7 +18,6 @@ mimir:
           endpoint: minio-enterprise.observability-prd.svc:9000
           insecure: true
 
-    # Blocks Storage
     blocks_storage:
       backend: s3
       s3:
@@ -38,7 +27,6 @@ mimir:
       tsdb:
         dir: /data/tsdb
 
-    # Ruler Storage
     ruler_storage:
       backend: s3
       s3:
@@ -46,7 +34,6 @@ mimir:
         endpoint: minio-enterprise.observability-prd.svc:9000
         insecure: true
 
-    # Alertmanager Storage
     alertmanager_storage:
       backend: s3
       s3:
@@ -54,15 +41,34 @@ mimir:
         endpoint: minio-enterprise.observability-prd.svc:9000
         insecure: true
     
-    # Usage Stats
     usage_stats:
       enabled: false
 
-# ---------------------------------------------------------------------
-# COMPONENT SCALING
-# ---------------------------------------------------------------------
+    # --- THE FIX: FORCE REPLICATION FACTOR 1 ---
+    ingester:
+      ring:
+        replication_factor: 1
+    
+    store_gateway:
+      sharding_ring:
+        replication_factor: 1
+
+    ruler:
+      ring:
+        replication_factor: 1
+
+    alertmanager:
+      sharding_ring:
+        replication_factor: 1
+    
+    distributor:
+      ring:
+        kvstore:
+          store: memberlist
+
 minio: { enabled: false }
 
+# Kubernetes Replicas (Must match RF=1)
 ingester:
   replicas: 1
   zoneAwareReplication: { enabled: false }
