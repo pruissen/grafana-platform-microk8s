@@ -1,47 +1,33 @@
-# loki-values.yaml
-
-# 1. Enable Single Binary Mode
+nameOverride: null
+fullnameOverride: null
 deploymentMode: SingleBinary
-
-# 2. Configure Loki for Filesystem Storage (No S3/Object Store)
 loki:
+  auth_enabled: true # 🔒 ENABLES MULTI-TENANCY
   commonConfig:
     replication_factor: 1
+    ring: { kvstore: { store: memberlist } }
   storage:
-    type: 'filesystem'
-  
-  # The missing piece causing your error:
+    type: s3
+    bucketNames: { chunks: loki-chunks, ruler: loki-ruler, admin: loki-admin }
+    s3:
+      endpoint: http://minio-enterprise.observability-prd.svc:9000
+      s3ForcePathStyle: true
+      insecure: true
+      accessKeyId: "${LOKI_S3_ACCESS_KEY}"
+      secretAccessKey: "${LOKI_S3_SECRET_KEY}"
   schemaConfig:
     configs:
-      - from: "2024-04-01"
+      - from: 2024-01-01
         store: tsdb
-        object_store: filesystem
+        object_store: s3
         schema: v13
-        index:
-          prefix: index_
-          period: 24h
-
-# 3. Configure Single Binary Replicas
+        index: { prefix: index_, period: 24h }
 singleBinary:
   replicas: 1
-  persistence:
-    enabled: true
-    size: 10Gi
-    # storageClass: standard  # Uncomment and set if you have a specific storage class
-
-# 4. Disable Ingress (as requested)
+  resources: { limits: { memory: 1Gi }, requests: { cpu: 100m, memory: 256Mi } }
+  persistence: { enabled: true, size: 10Gi, storageClassName: local-path }
 gateway:
-  ingress:
-    enabled: false
-  # If you want to disable the gateway entirely (just use the binary service):
-  # enabled: false
-
-# 5. Disable other modes to be safe (defaults should handle this with deploymentMode)
-read:
-  replicas: 0
-write:
-  replicas: 0
-backend:
-  replicas: 0
-
-# Use default images (no image overrides needed)
+  replicas: 1
+  service: { type: ClusterIP }
+  ingress: { enabled: false }
+monitoring: { dashboards: { enabled: false }, rules: { enabled: false }, serviceMonitor: { enabled: false }, selfMonitoring: { enabled: false, lokiCanary: { enabled: false } } }

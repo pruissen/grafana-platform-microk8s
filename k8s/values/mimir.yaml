@@ -1,83 +1,33 @@
 nameOverride: mimir
-
 global:
-  extraEnvFrom:
-    - secretRef:
-        name: mimir-s3-credentials
-
+  extraEnvFrom: [{ secretRef: { name: mimir-s3-credentials } }]
 mimir:
-  image:
-    repository: public.ecr.aws/bitnami/grafana-mimir
-    tag: latest
-
+  auth_enabled: true # 🔒 ENABLES MULTI-TENANCY
   structuredConfig:
     common:
       storage:
         backend: s3
-        s3:
-          endpoint: minio-enterprise.observability-prd.svc:9000
-          insecure: true
-
+        s3: { endpoint: minio-enterprise.observability-prd.svc:9000, insecure: true }
     blocks_storage:
       backend: s3
-      s3:
-        bucket_name: mimir-blocks
-        endpoint: minio-enterprise.observability-prd.svc:9000
-        insecure: true
-      tsdb:
-        dir: /data/tsdb
-
+      s3: { bucket_name: mimir-blocks, endpoint: minio-enterprise.observability-prd.svc:9000, insecure: true }
+      tsdb: { dir: /data/tsdb }
     ruler_storage:
       backend: s3
-      s3:
-        bucket_name: mimir-ruler
-        endpoint: minio-enterprise.observability-prd.svc:9000
-        insecure: true
-
+      s3: { bucket_name: mimir-ruler, endpoint: minio-enterprise.observability-prd.svc:9000, insecure: true }
     alertmanager_storage:
       backend: s3
-      s3:
-        bucket_name: mimir-ruler
-        endpoint: minio-enterprise.observability-prd.svc:9000
-        insecure: true
-    
-    usage_stats:
-      enabled: false
-
-    # --- REPLICATION FACTOR SETTINGS ---
-    
-    # 1. Ingester: CRITICAL FIX for "too many unhealthy instances"
-    # Tells Mimir it's okay to only have 1 copy of the data.
+      s3: { bucket_name: mimir-ruler, endpoint: minio-enterprise.observability-prd.svc:9000, insecure: true }
+    usage_stats: { enabled: false }
     ingester:
-      ring:
-        replication_factor: 1
-    
-    # 2. Store Gateway: Good practice for single node
+      ring: { replication_factor: 1 }
     store_gateway:
-      sharding_ring:
-        replication_factor: 1
-
-    # 3. Distributor: Use memberlist for ring status
+      sharding_ring: { replication_factor: 1 }
     distributor:
-      ring:
-        kvstore:
-          store: memberlist
-
+      ring: { kvstore: { store: memberlist } }
 minio: { enabled: false }
-
-# Kubernetes Replicas (Must match RF=1)
-ingester:
-  replicas: 1
-  zoneAwareReplication: { enabled: false }
-  affinity: null
-  resources: { requests: { memory: 128Mi }, limits: { memory: 1Gi } }
-
-store_gateway:
-  replicas: 1
-  zoneAwareReplication: { enabled: false }
-  affinity: null
-  resources: { requests: { memory: 128Mi }, limits: { memory: 1Gi } }
-
+ingester: { replicas: 1, affinity: null, zoneAwareReplication: { enabled: false }, resources: { requests: { memory: 128Mi }, limits: { memory: 1Gi } } }
+store_gateway: { replicas: 1, affinity: null, zoneAwareReplication: { enabled: false }, resources: { requests: { memory: 128Mi }, limits: { memory: 1Gi } } }
 distributor: { replicas: 1, affinity: null }
 querier: { replicas: 1, affinity: null }
 query_frontend: { replicas: 1, affinity: null }

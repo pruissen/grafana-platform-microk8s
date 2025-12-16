@@ -1,17 +1,7 @@
-# k8s/values/tempo.yaml
-
-# 1. Disable Ingress
-ingress:
-  enabled: false
-
-# 2. Inject Credentials via Environment Variables
-# The chart will map these to the container.
-envFrom:
-  - secretRef:
-      name: tempo-s3-credentials
-
-# 3. Explicit Configuration
-# We use the 'storage' block which the chart's _helpers.tpl merges into the config.
+ingress: { enabled: false }
+envFrom: [{ secretRef: { name: tempo-s3-credentials } }]
+tempo:
+  multitenancyEnabled: true # 🔒 ENABLES MULTI-TENANCY
 storage:
   trace:
     backend: s3
@@ -19,28 +9,11 @@ storage:
       bucket: tempo-traces
       endpoint: minio-enterprise.observability-prd.svc:9000
       insecure: true
-      # We reference the Env Vars injected above
       access_key: "${TEMPO_S3_ACCESS_KEY}"
       secret_key: "${TEMPO_S3_SECRET_KEY}"
-      # "path" style is required for MinIO
       forcepathstyle: true
-
-# 4. Persistence
-persistence:
-  enabled: true
-  size: 10Gi
-  storageClassName: local-path
-
-# 5. Resources (Diet Mode)
-resources:
-  requests:
-    cpu: 50m
-    memory: 128Mi
-  limits:
-    cpu: 500m
-    memory: 512Mi
-
-# 6. Service Graph (Optional - enables metrics from traces)
+persistence: { enabled: true, size: 10Gi, storageClassName: local-path }
+resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
 metricsGenerator:
   enabled: true
   config:
@@ -48,3 +21,4 @@ metricsGenerator:
       remote_write:
         - url: http://mimir-nginx.observability-prd.svc:80/api/v1/push
           send_exemplars: true
+          # Note: Self-monitoring metrics will need a tenant header too in a real prod setup
