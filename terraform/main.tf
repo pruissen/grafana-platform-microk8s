@@ -416,7 +416,7 @@ resource "kubectl_manifest" "astronomy_shop" {
       source = {
         repoURL        = "https://open-telemetry.github.io/opentelemetry-helm-charts"
         chart          = "opentelemetry-demo"
-        targetRevision = "0.39.0" # ⚠️ CRITICAL: Must be this version to support the values below
+        targetRevision = "0.31.0"
         helm = {
           values = file("${path.module}/../k8s/values/astronomy-shop.yaml")
         }

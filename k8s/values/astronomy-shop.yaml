@@ -1,15 +1,5 @@
-# k8s/values/astronomy-shop.yaml
-
-# 1. Global Overrides (Strictly using envOverrides)
-default:
-  envOverrides:
-    - name: OTEL_COLLECTOR_NAME
-      value: "alloy"
-    - name: OTEL_EXPORTER_OTLP_ENDPOINT
-      value: "http://alloy.observability-prd.svc:4317"
-    - name: OTEL_RESOURCE_ATTRIBUTES
-      value: "service.namespace=devteam-1,deployment.environment=production"
-
+# OpenTelemetry Demo Helm Chart Values
+# All observability backend features disabled, using external OTEL collector
 opentelemetry-collector:
   enabled: false
 jaeger:
@@ -20,3 +10,15 @@ grafana:
   enabled: false
 opensearch:
   enabled: false
+default:
+  envOverrides:
+    # Changed protocol to grpc for port 4317
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: "grpc"
+    # Updated all endpoints to use standard gRPC port 4317
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://alloy.observability-prd.svc:4317"
+components:
+  loadgenerator:
+    enabled: false
+
