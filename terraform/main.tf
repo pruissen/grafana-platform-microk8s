@@ -15,9 +15,9 @@ resource "kubernetes_namespace" "observability" {
   }
 }
 
-resource "kubernetes_namespace" "astronomy_shop" {
+resource "kubernetes_namespace" "devteam_1" {
   metadata {
-    name = "astronomy-shop"
+    name = "devteam-1"
   }
 }
 
@@ -344,7 +344,7 @@ resource "kubectl_manifest" "grafana" {
 }
 
 # -------------------------------------------------------------------
-# 9. ALLOY (Collector & Router)
+# 9. ALLOY (Collector / Router)
 # -------------------------------------------------------------------
 resource "kubectl_manifest" "alloy" {
   depends_on = [
@@ -379,6 +379,46 @@ resource "kubectl_manifest" "alloy" {
         targetRevision = "0.9.0"
         helm = {
           values = file("${path.module}/../k8s/values/alloy.yaml")
+        }
+      }
+    }
+  })
+}
+
+# -------------------------------------------------------------------
+# 10. OTEL DEMO (Astronomy Shop)
+# -------------------------------------------------------------------
+resource "kubectl_manifest" "astronomy_shop" {
+  depends_on = [
+    kubectl_manifest.alloy,
+    kubernetes_namespace.devteam_1
+  ]
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name       = "astronomy-shop"
+      namespace  = "argocd-system"
+      finalizers = ["resources-finalizer.argocd.argoproj.io"]
+    }
+    spec = {
+      project = "default"
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "devteam-1"
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+      }
+      source = {
+        repoURL        = "https://open-telemetry.github.io/opentelemetry-helm-charts"
+        chart          = "opentelemetry-demo"
+        targetRevision = "0.39.0" # ⚠️ CRITICAL: Must be this version to support the values below
+        helm = {
+          values = file("${path.module}/../k8s/values/astronomy-shop.yaml")
         }
       }
     }

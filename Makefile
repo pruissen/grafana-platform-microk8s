@@ -1,4 +1,4 @@
-.PHONY: all install-k3s install-argocd install-prereqs install-mimir install-loki install-tempo install-grafana install-alloy install-all uninstall-all clean clean-minio clean-mimir clean-loki clean-tempo clean-grafana clean-alloy bootstrap forward nuke
+.PHONY: all install-k3s install-argocd install-prereqs install-mimir install-loki install-tempo install-grafana install-alloy install-demo install-all uninstall-all clean clean-minio clean-mimir clean-loki clean-tempo clean-grafana clean-alloy clean-demo bootstrap forward nuke
 
 USER_NAME ?= $(shell whoami)
 NODE_IFACE ?= $(shell ip route get 1.1.1.1 | awk '{print $$5;exit}')
@@ -9,9 +9,9 @@ NODE_IP ?= $(shell ip route get 1.1.1.1 | awk '{print $$7;exit}')
 # ---------------------------------------------------------
 all: install-k3s install-argocd install-all
 
-install-all: install-prereqs install-mimir install-loki install-tempo install-grafana install-alloy bootstrap
+install-all: install-prereqs install-mimir install-loki install-tempo install-grafana install-alloy install-demo bootstrap
 
-uninstall-all: uninstall-alloy uninstall-grafana uninstall-tempo uninstall-loki uninstall-mimir uninstall-prereqs
+uninstall-all: uninstall-demo uninstall-alloy uninstall-grafana uninstall-tempo uninstall-loki uninstall-mimir uninstall-prereqs
 
 # ---------------------------------------------------------
 # 1. INFRASTRUCTURE
@@ -165,14 +165,31 @@ clean-alloy:
 	@kubectl delete pvc -n observability-prd -l app.kubernetes.io/name=alloy --force --grace-period=0 2>/dev/null || true
 	@kubectl delete daemonset -n observability-prd alloy --force --grace-period=0 2>/dev/null || true
 
+# --- OTEL DEMO (Astronomy Shop) ---
+install-demo:
+	@echo "--- Installing Astronomy Shop (DevTeam-1) ---"
+	cd terraform && terraform apply -auto-approve -target=kubectl_manifest.astronomy_shop
+
+uninstall-demo:
+	@echo "--- Removing Astronomy Shop ---"
+	cd terraform && terraform destroy -auto-approve -target=kubectl_manifest.astronomy_shop
+	@make clean-demo
+
+clean-demo:
+	@echo "🧹 Cleaning up Shop Resources..."
+	@kubectl delete namespace devteam-1 --force --grace-period=0 2>/dev/null || true
+
 # ---------------------------------------------------------
 # 3. UTILITIES & BOOTSTRAP
 # ---------------------------------------------------------
 bootstrap:
-	@echo "--- 🚀 Bootstrapping Grafana Orgs & Datasources ---"
+	@echo "--- 🚀 Bootstrapping Grafana Orgs & Dashboards ---"
 	@# Ensure dependencies (requests) are installed for the python script
 	@pip3 install requests >/dev/null 2>&1 || true
+	@# 1. Create Orgs & Datasources
 	@python3 scripts/manage.py --bootstrap-orgs
+	@# 2. Import Dashboards
+	@python3 scripts/manage.py --import-dashboards
 
 forward:
 	@bash scripts/portforward-all.sh start
