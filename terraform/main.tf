@@ -1,6 +1,44 @@
 # terraform/main.tf
 
 # -------------------------------------------------------------------
+# 1. PROVIDERS & CONFIG
+# -------------------------------------------------------------------
+terraform {
+  required_providers {
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.23"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.11"
+    }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = ">= 1.14.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.5"
+    }
+  }
+}
+
+provider "kubernetes" {
+  config_path = "~/.kube/config"
+}
+
+provider "helm" {
+  kubernetes {
+    config_path = "~/.kube/config"
+  }
+}
+
+provider "kubectl" {
+  config_path = "~/.kube/config"
+}
+
+# -------------------------------------------------------------------
 # 2. NAMESPACES
 # -------------------------------------------------------------------
 resource "kubernetes_namespace" "argocd" {
@@ -78,6 +116,8 @@ resource "kubernetes_secret_v1" "minio_creds" {
 }
 
 # C. Secrets for Clients (Mimir, Loki, Tempo) to access MinIO
+# ⚠️ CRITICAL: Using AWS_... key names allows automatic detection by SDKs.
+
 resource "kubernetes_secret_v1" "mimir_s3_creds" {
   metadata {
     name      = "mimir-s3-credentials"
@@ -96,7 +136,6 @@ resource "kubernetes_secret_v1" "loki_s3_creds" {
     namespace = "observability-prd"
   }
   data = {
-    # ✅ FIX: Use standard AWS Env Var names for auto-detection
     AWS_ACCESS_KEY_ID     = "admin"
     AWS_SECRET_ACCESS_KEY = random_password.minio_root_password.result
   }
@@ -109,7 +148,6 @@ resource "kubernetes_secret_v1" "tempo_s3_creds" {
     namespace = "observability-prd"
   }
   data = {
-    # ✅ FIX: Use standard AWS Env Var names for auto-detection
     AWS_ACCESS_KEY_ID     = "admin"
     AWS_SECRET_ACCESS_KEY = random_password.minio_root_password.result
   }
@@ -129,7 +167,6 @@ resource "helm_release" "ksm" {
 # 5. LOKI (Logs + Embedded MinIO)
 # -------------------------------------------------------------------
 resource "kubectl_manifest" "loki" {
-  # Now depends on the secrets, as Loki hosts the storage
   depends_on = [
     helm_release.argocd, 
     kubernetes_secret_v1.loki_s3_creds, 
@@ -158,7 +195,7 @@ resource "kubectl_manifest" "loki" {
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "loki"
-        targetRevision = "6.24.0"
+        targetRevision = "6.24.0" # Stable single-binary version
         helm = {
           values = file("${path.module}/../k8s/values/loki.yaml")
         }
@@ -168,13 +205,12 @@ resource "kubectl_manifest" "loki" {
 }
 
 # -------------------------------------------------------------------
-# 6. MIMIR (Metrics)
+# 6. MIMIR (Metrics - Distributed)
 # -------------------------------------------------------------------
 resource "kubectl_manifest" "mimir" {
-  # Depends on Loki now (since Loki provides the S3 endpoint)
   depends_on = [
     helm_release.argocd, 
-    kubectl_manifest.loki,
+    kubectl_manifest.loki, 
     kubernetes_secret_v1.mimir_s3_creds
   ]
   yaml_body = yamlencode({
@@ -200,6 +236,7 @@ resource "kubectl_manifest" "mimir" {
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "mimir-distributed"
+        # 🔙 REVERTED: Back to the rock-solid 5.x series
         targetRevision = "5.6.0"
         helm = {
           values = file("${path.module}/../k8s/values/mimir.yaml")
@@ -210,10 +247,14 @@ resource "kubectl_manifest" "mimir" {
 }
 
 # -------------------------------------------------------------------
-# 7. TEMPO (Traces)
+# 7. TEMPO (Traces - Distributed)
 # -------------------------------------------------------------------
 resource "kubectl_manifest" "tempo" {
-  depends_on = [helm_release.argocd, kubectl_manifest.loki, kubernetes_secret_v1.tempo_s3_creds]
+  depends_on = [
+    helm_release.argocd, 
+    kubectl_manifest.loki, # Loki provides S3
+    kubernetes_secret_v1.tempo_s3_creds
+  ]
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1"
     kind       = "Application"
@@ -236,8 +277,8 @@ resource "kubectl_manifest" "tempo" {
       }
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
-        chart          = "tempo"
-        targetRevision = "1.10.1"
+        chart          = "tempo-distributed"
+        targetRevision = "1.59.0" # 🚀 Updated
         helm = {
           values = file("${path.module}/../k8s/values/tempo.yaml")
         }
@@ -297,7 +338,7 @@ resource "kubectl_manifest" "grafana" {
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "grafana"
-        targetRevision = "8.0.0"
+        targetRevision = "8.5.1" # 🚀 Updated
         helm = {
           values = file("${path.module}/../k8s/values/grafana.yaml")
         }
@@ -339,7 +380,7 @@ resource "kubectl_manifest" "alloy" {
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "alloy"
-        targetRevision = "0.9.0"
+        targetRevision = "1.5.0" # 🚀 Updated
         helm = {
           values = file("${path.module}/../k8s/values/alloy.yaml")
         }
@@ -379,6 +420,7 @@ resource "kubectl_manifest" "astronomy_shop" {
       source = {
         repoURL        = "https://open-telemetry.github.io/opentelemetry-helm-charts"
         chart          = "opentelemetry-demo"
+        # ⚠️ LOCKED: Version pinned to 0.31.0 for stability as requested
         targetRevision = "0.31.0"
         helm = {
           values = file("${path.module}/../k8s/values/astronomy-shop.yaml")

@@ -1,57 +1,123 @@
 # k8s/values/tempo.yaml
-# Chart Version: 1.10.1
+# Chart: tempo-distributed
+# Version: 1.59.0
 
-# 🔒 INJECT CREDENTIALS
-# Injects AWS_ACCESS_KEY_ID & AWS_SECRET_ACCESS_KEY
+# 1. Global Settings
+# ✅ Enable Multitenancy
+multitenancyEnabled: true
+
+# ⚠️ FIX for "Pending" pods on Laptop:
+# Disable High Availability constraints so pods can run on the same node.
 global:
+  affinity: {}
+  topologySpreadConstraints: []
   extraEnvFrom:
     - secretRef:
         name: tempo-s3-credentials
 
-tempo:
-  # 🔒 MULTI-TENANCY ENABLED (Requires X-Scope-OrgID header)
-  multitenancy:
-    enabled: true
+# 2. Service Account
+# Required because we removed fullnameOverride; ensures clean creation.
+serviceAccount:
+  create: true
+  name: null
 
-  # Storage Configuration
-  storage:
-    trace:
-      backend: s3
-      s3:
-        bucket: tempo-data
-        endpoint: loki-minio.observability-prd.svc:9000
-        # ⚠️ REQUIRED: Force HTTP (MinIO does not have TLS)
-        insecure: true
-        # No credentials here - handled by extraEnvFrom
+# 3. Traces (OTLP)
+traces:
+  otlp:
+    http: { enabled: true }
+    grpc: { enabled: true }
 
-  # Retention (Managed by Compactor)
-  retention: 24h
+# 4. Storage (S3/MinIO)
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: tempo-data
+      endpoint: loki-minio.observability-prd.svc:9000
+      insecure: true
 
-# --- COMPONENT CONFIG ---
+# 5. Server Config
+server:
+  # ⚠️ Must be 3200 for Liveness Probes to pass
+  httpListenPort: 3200
+  grpcListenPort: 9095
+
+# 6. Components (Laptop Scale)
+# - Replicas: 1 (No HA)
+# - Resources: Low Requests (Pack tight), High Limits (Allow bursts)
+# - Affinity: Disabled (Fixes "Pending")
+
 ingester:
   replicas: 1
-  config:
-    replication_factor: 1
+  affinity: {}
+  topologySpreadConstraints: []
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 1Gi }
 
 distributor:
-  config:
-    log_received_traces: false
+  replicas: 1
+  affinity: {}
+  topologySpreadConstraints: []
+  logReceivedTraces: false
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 512Mi }
 
 compactor:
+  replicas: 1
+  affinity: {}
+  topologySpreadConstraints: []
   config:
     compaction:
       block_retention: 24h
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 512Mi }
 
-# Metrics Generator (Creates metrics from traces)
-metricsGenerator:
+querier:
+  replicas: 1
+  affinity: {}
+  topologySpreadConstraints: []
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 1Gi }
+
+queryFrontend:
+  replicas: 1
+  affinity: {}
+  topologySpreadConstraints: []
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 512Mi }
+
+# 7. Gateway (Ingress/Auth)
+gateway:
   enabled: true
   replicas: 1
-  config:
-    storage:
-      remote_write:
-        - url: http://mimir-nginx.observability-prd.svc:80/api/v1/push
-          send_exemplars: true
+  affinity: {}
+  topologySpreadConstraints: []
+  ingress:
+    enabled: false # 🚫 Disabled
+  basicAuth:
+    enabled: false
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 128Mi }
 
-server:
-  http_listen_port: 3100
-  grpc_listen_port: 9095
+# 8. Dependencies
+memcached:
+  enabled: true
+  replicaCount: 1
+  affinity: {}
+  topologySpreadConstraints: []
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+metaMonitoring:
+  serviceMonitor:
+    enabled: false

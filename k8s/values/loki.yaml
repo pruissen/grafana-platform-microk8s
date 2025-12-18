@@ -1,29 +1,19 @@
 # k8s/values/loki.yaml
-# Chart Version: 6.24.0
-
-nameOverride: null
-fullnameOverride: null
-
 deploymentMode: SingleBinary
 
-# 🔒 INJECT CREDENTIALS
-# The chart injects 'AWS_ACCESS_KEY_ID' & 'AWS_SECRET_ACCESS_KEY'
-# which the AWS SDK automatically detects.
 global:
   extraEnvFrom:
     - secretRef:
         name: loki-s3-credentials
 
 loki:
-  # 🔒 MULTI-TENANCY ENABLED
-  auth_enabled: true
-
+  auth_enabled: true # ✅ Multitenancy Enabled
+  
   commonConfig:
     replication_factor: 1
     ring:
       kvstore:
         store: memberlist
-
   storage:
     type: s3
     bucketNames:
@@ -31,12 +21,9 @@ loki:
       ruler: loki-ruler
       admin: loki-admin
     s3:
-      # Pointing to its own embedded MinIO service
       endpoint: http://loki-minio.observability-prd.svc:9000
       s3ForcePathStyle: true
-      # ⚠️ REQUIRED: MinIO runs in HTTP mode
-      insecure: true 
-      # Credentials are handled by global.extraEnvFrom
+      insecure: true
 
   schemaConfig:
     configs:
@@ -48,68 +35,53 @@ loki:
           prefix: index_
           period: 24h
 
-# --- COMPONENT SCALING ---
-
 singleBinary:
   replicas: 1
-  resources:
-    limits:
-      memory: 1Gi
-    requests:
-      cpu: 100m
-      memory: 256Mi
   persistence:
     enabled: true
     size: 10Gi
-    storageClassName: local-path
+  # 💻 Laptop Sizing:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi # Allowed to burst, but won't reserve it all
 
-# --- EMBEDDED MINIO CONFIGURATION ---
-# This runs a MinIO container as a sidecar/sub-chart
 minio:
   enabled: true
   rootUser: admin
-  # Use the shared secret for the MinIO Root Password
   existingSecret: minio-creds
-  persistence:
-    enabled: true
-    size: 10Gi
-    storageClass: local-path
-  
-  # 🚀 AUTOMATIC BUCKET CREATION
-  # Creates buckets for Loki, Mimir, and Tempo
+  persistence: { enabled: true, size: 10Gi }
+  resources:
+    requests: { memory: 256Mi }
+    limits: { memory: 1Gi }
   buckets:
     - name: loki-chunks
       policy: none
-      purge: false
     - name: loki-ruler
       policy: none
-      purge: false
     - name: loki-admin
       policy: none
-      purge: false
     - name: mimir-blocks
       policy: none
-      purge: false
     - name: mimir-ruler
       policy: none
-      purge: false
     - name: tempo-data
       policy: none
-      purge: false
 
-# Disable Distributed Components (We are using SingleBinary)
+# Disable microservices
 write: { replicas: 0 }
 read: { replicas: 0 }
 backend: { replicas: 0 }
 
 gateway:
   replicas: 1
-  service:
-    type: ClusterIP
-  ingress:
-    enabled: false
+  ingress: { enabled: false } # 🚫 Ingress Disabled
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
 
-# Disable Self-Monitoring to save resources
 monitoring:
   dashboards: { enabled: false }
   rules: { enabled: false }

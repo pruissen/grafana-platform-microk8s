@@ -1,230 +1,94 @@
+# k8s/values/alloy.yaml
+# Chart: alloy (v1.5.0)
+
 alloy:
   configMap:
-    create: true
     content: |
-      
-      // ==============================================================================
-      // 1. SYSTEM PIPELINE
-      // ==============================================================================
-
-      discovery.kubernetes "nodes" {
-        role = "node"
-      }
-
-      discovery.relabel "nodes_enriched" {
-        targets = discovery.kubernetes.nodes.targets
-        
-        rule {
-          source_labels = ["__meta_kubernetes_node_name"]
-          target_label  = "node"
-        }
-        
-        rule {
-          action = "labelmap"
-          regex  = "__meta_kubernetes_node_label_(.+)"
-        }
-      }
-
-      prometheus.scrape "kubelet_scraper" {
-        targets    = discovery.relabel.nodes_enriched.output
-        scheme     = "https"
-        tls_config {
-          ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-          insecure_skip_verify = true
-        }
-        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        forward_to        = [prometheus.remote_write.mimir_system.receiver]
-      }
-
-      prometheus.exporter.unix "node_metrics" { }
-      
-      prometheus.scrape "node_scraper" {
-        targets    = prometheus.exporter.unix.node_metrics.targets
-        forward_to = [prometheus.remote_write.mimir_system.receiver]
-      }
-
-      discovery.kubernetes "pods" {
-        role = "pod"
-      }
-
-      discovery.relabel "logs_k8s" {
-        targets = discovery.kubernetes.pods.targets
-        
-        rule {
-          source_labels = ["__meta_kubernetes_namespace"]
-          action        = "keep"
-          regex         = "kube-system|argocd-system" 
-        }
-
-        rule {
-          source_labels = ["__meta_kubernetes_namespace"]
-          target_label  = "namespace"
-        }
-        
-        rule {
-          source_labels = ["__meta_kubernetes_pod_name"]
-          target_label  = "pod"
-        }
-        
-        rule {
-          action = "labelmap"
-          regex  = "__meta_kubernetes_pod_label_(.+)"
-        }
-      }
-
-      loki.source.kubernetes "pod_logs_k8s" {
-        targets    = discovery.relabel.logs_k8s.output
-        forward_to = [loki.write.loki_system.receiver]
-      }
-
-      loki.source.kubernetes_events "cluster_events" {
-        job_name   = "integrations/kubernetes/eventhandler"
-        forward_to = [loki.write.loki_system.receiver]
-      }
-
-      prometheus.remote_write "mimir_system" {
-        endpoint {
-          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
-          headers = { "X-Scope-OrgID" = "platform-k8s" }
-        }
-      }
-
-      loki.write "loki_system" {
-        endpoint {
-          url     = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
-          headers = { "X-Scope-OrgID" = "platform-k8s" }
-        }
-      }
-
-      // ==============================================================================
-      // 2. OBSERVABILITY PIPELINE
-      // ==============================================================================
-
-      discovery.relabel "logs_obs" {
-        targets = discovery.kubernetes.pods.targets
-        
-        rule {
-          source_labels = ["__meta_kubernetes_namespace"]
-          action        = "keep"
-          regex         = "observability-prd"
-        }
-        
-        rule {
-          source_labels = ["__meta_kubernetes_namespace"]
-          target_label  = "namespace"
-        }
-        
-        rule {
-          source_labels = ["__meta_kubernetes_pod_name"]
-          target_label  = "pod"
-        }
-        
-        rule {
-          action = "labelmap"
-          regex  = "__meta_kubernetes_pod_label_(.+)"
-        }
-      }
-
-      loki.source.kubernetes "pod_logs_obs" {
-        targets    = discovery.relabel.logs_obs.output
-        forward_to = [loki.write.loki_obs.receiver]
-      }
-
-      loki.write "loki_obs" {
-        endpoint {
-          url     = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
-          headers = { "X-Scope-OrgID" = "platform-obs" }
-        }
-      }
-
-      // ==============================================================================
-      // 3. SHOP PIPELINE
-      // ==============================================================================
-
-      otelcol.receiver.otlp "shop_receiver" {
+      // 1. OTLP Receiver (Ingest from Apps)
+      otelcol.receiver.otlp "default" {
         grpc { endpoint = "0.0.0.0:4317" }
         http { endpoint = "0.0.0.0:4318" }
 
         output {
-          metrics = [otelcol.processor.k8sattributes.k8s_enricher.input]
-          logs    = [otelcol.processor.k8sattributes.k8s_enricher.input]
-          traces  = [otelcol.processor.k8sattributes.k8s_enricher.input]
+          metrics = [otelcol.processor.batch.default.input]
+          logs    = [otelcol.processor.batch.default.input]
+          traces  = [otelcol.processor.batch.default.input]
         }
       }
 
-      otelcol.processor.k8sattributes "k8s_enricher" {
-        extract {
-          metadata = ["k8s.namespace.name", "k8s.pod.name", "k8s.pod.uid", "k8s.deployment.name", "k8s.node.name"]
-          
-          label {
-            key_regex = "(.*)"
-            tag_name  = "$1"
-          }
-          
-          annotation {
-            key_regex = "(.*)"
-            tag_name  = "annotation_$1"
-          }
-        }
-        
-        pod_association {
-          source { from = "connection" }
-        }
-
+      // 2. Processors
+      otelcol.processor.batch "default" {
         output {
-          metrics = [otelcol.processor.batch.shop_batch.input]
-          logs    = [otelcol.processor.batch.shop_batch.input]
-          traces  = [otelcol.processor.batch.shop_batch.input]
+          metrics = [otelcol.exporter.prometheus.mimir.input]
+          logs    = [otelcol.exporter.loki.default.input]
+          traces  = [otelcol.exporter.otlp.tempo.input]
         }
       }
 
-      otelcol.processor.batch "shop_batch" {
-        output {
-          metrics = [otelcol.exporter.prometheus.mimir_shop_converter.input]
-          logs    = [otelcol.exporter.loki.loki_shop.input]
-          traces  = [otelcol.exporter.otlp.tempo_shop.input]
+      // 3. EXPORTER: METRICS (Mimir)
+      otelcol.exporter.prometheus "mimir" {
+        forward_to = [prometheus.remote_write.mimir.receiver]
+      }
+
+      prometheus.remote_write "mimir" {
+        endpoint {
+          // Pointing to Mimir Nginx Gateway
+          url = "http://mimir-mimir-distributed-nginx.observability-prd.svc:80/api/v1/push"
+          
+          // ✅ Multitenancy Header
+          headers = {
+            "X-Scope-OrgID" = "tenant1",
+          }
         }
       }
 
-      otelcol.exporter.otlp "tempo_shop" {
+      // 4. EXPORTER: LOGS (Loki)
+      otelcol.exporter.loki "default" {
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          // Pointing to Loki Gateway
+          url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          
+          // ✅ Multitenancy ID
+          tenant_id = "tenant1"
+        }
+      }
+
+      // 5. EXPORTER: TRACES (Tempo)
+      otelcol.exporter.otlp "tempo" {
         client {
-          endpoint = "tempo.observability-prd.svc:4317"
-          tls { insecure = true }
-          headers = { "X-Scope-OrgID" = "devteam-1" }
+          // Pointing to Tempo Distributor (Long name because fullnameOverride is disabled)
+          endpoint = "tempo-tempo-distributed-distributor.observability-prd.svc.cluster.local:4317"
+          
+          // ✅ Multitenancy Header
+          headers = {
+            "X-Scope-OrgID" = "tenant1",
+          }
+          
+          tls {
+            insecure = true
+          }
         }
       }
 
-      otelcol.exporter.loki "loki_shop" {
-        forward_to = [loki.write.loki_shop_client.receiver]
+      // 6. Infrastructure Monitoring (K8s Metrics)
+      prometheus.exporter.unix "default" {
+        include_exporter_metrics = true
       }
-      
-      loki.write "loki_shop_client" {
-        endpoint {
-          url     = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
-          headers = { "X-Scope-OrgID" = "devteam-1" }
-        }
+      prometheus.scrape "node" {
+        targets = prometheus.exporter.unix.default.targets
+        forward_to = [prometheus.remote_write.mimir.receiver]
       }
 
-      otelcol.exporter.prometheus "mimir_shop_converter" {
-        forward_to = [prometheus.remote_write.mimir_shop.receiver]
-      }
-
-      prometheus.remote_write "mimir_shop" {
-        endpoint {
-          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
-          headers = { "X-Scope-OrgID" = "devteam-1" }
-        }
-      }
-
-# Configuration for DaemonSet
-controller:
-  type: daemonset
-  hostNetwork: true 
-  dnsPolicy: ClusterFirstWithHostNet
-
-service:
-  enabled: true
-  type: ClusterIP
-  ports:
-    otlp-grpc: { port: 4317, targetPort: 4317, protocol: TCP }
-    otlp-http: { port: 4318, targetPort: 4318, protocol: TCP }
+  # Laptop Sizing
+  controller:
+    type: DaemonSet
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 512Mi

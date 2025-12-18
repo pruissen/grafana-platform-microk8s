@@ -61,7 +61,10 @@ install-k3s:
 
 install-argocd:
 	@echo "--- Installing ArgoCD ---"
-	cd terraform && terraform init && terraform apply -auto-approve -target=helm_release.argocd
+	# Explicitly target namespace first to avoid dependency errors
+	cd terraform && terraform init && terraform apply -auto-approve \
+		-target=kubernetes_namespace.argocd \
+		-target=helm_release.argocd
 	@$(call wait_for_pods,argocd-system,app.kubernetes.io/name=argocd-server)
 	@bash scripts/portforward-argocd.sh start
 
@@ -69,10 +72,12 @@ install-argocd:
 # 2. SEPARATE COMPONENTS & CLEANUP
 # ---------------------------------------------------------
 
-# --- PRE-REQUISITES (Secrets & KSM - No Standalone MinIO) ---
+# --- PRE-REQUISITES (Secrets & KSM) ---
 install-prereqs:
 	@echo "--- Installing Secrets & KSM ---"
+	# ⚠️ Added kubernetes_namespace.observability to fix "not found" error
 	cd terraform && terraform apply -auto-approve \
+		-target=kubernetes_namespace.observability \
 		-target=random_password.minio_root_password \
 		-target=kubernetes_secret_v1.minio_creds \
 		-target=kubernetes_secret_v1.mimir_s3_creds \
@@ -193,7 +198,9 @@ clean-alloy:
 # --- DEMO ---
 install-demo:
 	@echo "--- Installing Astronomy Shop ---"
-	cd terraform && terraform apply -auto-approve -target=kubectl_manifest.astronomy_shop
+	cd terraform && terraform apply -auto-approve \
+		-target=kubernetes_namespace.devteam_1 \
+		-target=kubectl_manifest.astronomy_shop
 	@# Wait removed as requested
 
 uninstall-demo:

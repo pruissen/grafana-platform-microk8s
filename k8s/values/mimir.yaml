@@ -1,34 +1,25 @@
 # k8s/values/mimir.yaml
-# Chart Version: 5.6.0
+# Version: 5.6.0
 
-# 🔒 INJECT CREDENTIALS
-# Injects AWS_ACCESS_KEY_ID & AWS_SECRET_ACCESS_KEY
 global:
   extraEnvFrom:
     - secretRef:
         name: mimir-s3-credentials
 
-mimir:
-  image:
-    repository: public.ecr.aws/bitnami/grafana-mimir
-    tag: latest
+minio: { enabled: false }
 
-  # 🔒 MULTI-TENANCY ENABLED
-  auth_enabled: true
+mimir:
+  auth_enabled: true # ✅ Multitenancy Enabled
 
   structuredConfig:
-    
-    # Common Storage Configuration
     common:
       storage:
         backend: s3
         s3:
           endpoint: loki-minio.observability-prd.svc:9000
           bucket_name: mimir-blocks
-          # ⚠️ REQUIRED: Force HTTP (MinIO does not have TLS)
           insecure: true
 
-    # Blocks Storage (Long-term)
     blocks_storage:
       backend: s3
       s3:
@@ -38,7 +29,6 @@ mimir:
       tsdb:
         dir: /data/tsdb
 
-    # Ruler Storage (Alert Rules)
     ruler_storage:
       backend: s3
       s3:
@@ -46,55 +36,67 @@ mimir:
         endpoint: loki-minio.observability-prd.svc:9000
         insecure: true
 
-    # Alertmanager Storage
     alertmanager_storage:
       backend: s3
       s3:
         bucket_name: mimir-ruler
         endpoint: loki-minio.observability-prd.svc:9000
         insecure: true
-    
-    usage_stats:
-      enabled: false
 
-    # --- REPLICATION FACTOR SETTINGS ---
-    # Set to 1 because we are running single replicas per component
+    usage_stats: { enabled: false }
+
+    # Laptop Optimization: Replication Factor 1
     ingester:
-      ring:
-        replication_factor: 1
-    
+      ring: { replication_factor: 1 }
     store_gateway:
-      sharding_ring:
-        replication_factor: 1
-
+      sharding_ring: { replication_factor: 1 }
     distributor:
-      ring:
-        kvstore:
-          store: memberlist
+      ring: { kvstore: { store: memberlist } }
 
-# --- COMPONENT SCALING ---
-# Disable Mimir's own MinIO (We use Loki's)
-minio:
-  enabled: false
-
+# 💻 Laptop Sizing:
+# Low requests allow efficient bin-packing on one node.
 ingester:
   replicas: 1
-  zoneAwareReplication: { enabled: false }
-  affinity: null
-  resources: { requests: { memory: 128Mi }, limits: { memory: 1Gi } }
+  resources: { requests: { memory: 128Mi, cpu: 50m }, limits: { memory: 1Gi } }
 
 store_gateway:
   replicas: 1
-  zoneAwareReplication: { enabled: false }
-  affinity: null
-  resources: { requests: { memory: 128Mi }, limits: { memory: 1Gi } }
+  resources: { requests: { memory: 128Mi, cpu: 50m }, limits: { memory: 1Gi } }
 
-distributor: { replicas: 1, affinity: null }
-querier: { replicas: 1, affinity: null }
-query_frontend: { replicas: 1, affinity: null }
-ruler: { replicas: 1, affinity: null }
-compactor: { replicas: 1, affinity: null }
-alertmanager: { replicas: 1, affinity: null, zoneAwareReplication: { enabled: false } }
-overrides_exporter: { replicas: 1 }
-rollout_operator: { enabled: true }
-nginx: { enabled: true, replicas: 1 }
+distributor:
+  replicas: 1
+  resources: { requests: { memory: 64Mi, cpu: 50m }, limits: { memory: 512Mi } }
+
+querier:
+  replicas: 1
+  resources: { requests: { memory: 128Mi, cpu: 50m }, limits: { memory: 1Gi } }
+
+query_frontend:
+  replicas: 1
+  resources: { requests: { memory: 64Mi, cpu: 50m }, limits: { memory: 512Mi } }
+
+ruler:
+  replicas: 1
+  resources: { requests: { memory: 64Mi, cpu: 50m }, limits: { memory: 512Mi } }
+
+compactor:
+  replicas: 1
+  resources: { requests: { memory: 64Mi, cpu: 50m }, limits: { memory: 512Mi } }
+
+alertmanager:
+  replicas: 1
+  resources: { requests: { memory: 64Mi, cpu: 50m }, limits: { memory: 256Mi } }
+
+overrides_exporter:
+  replicas: 1
+  resources: { requests: { memory: 32Mi, cpu: 10m }, limits: { memory: 128Mi } }
+
+rollout_operator:
+  enabled: true
+  resources: { requests: { memory: 32Mi, cpu: 10m }, limits: { memory: 128Mi } }
+
+nginx:
+  enabled: true
+  replicas: 1
+  ingress: { enabled: false } # 🚫 Ingress Disabled
+  resources: { requests: { memory: 32Mi, cpu: 10m }, limits: { memory: 128Mi } }
