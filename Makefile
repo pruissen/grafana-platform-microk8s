@@ -167,7 +167,13 @@ clean-grafana:
 install-alloy:
 	@echo "--- Installing Grafana Alloy ---"
 	cd terraform && terraform apply -auto-approve -target=kubectl_manifest.alloy
-	@echo "⏳ Waiting for Alloy DaemonSet..."
+	@echo "⏳ Waiting for Alloy DaemonSet definition..."
+	@# Loop until the DaemonSet actually exists in the API
+	@timeout=60; until kubectl get daemonset alloy -n observability-prd >/dev/null 2>&1; do \
+		echo "   ...waiting for ArgoCD to create resource..."; \
+		sleep 2; \
+	done
+	@echo "⏳ Waiting for Alloy rollout..."
 	@kubectl rollout status daemonset/alloy -n observability-prd --timeout=120s
 
 uninstall-alloy: remove-alloy
@@ -188,8 +194,7 @@ clean-alloy:
 install-demo:
 	@echo "--- Installing Astronomy Shop ---"
 	cd terraform && terraform apply -auto-approve -target=kubectl_manifest.astronomy_shop
-	# ⚠️ FIX: Use 'component=frontendProxy' (matches chart v0.31.0 behavior)
-	@$(call wait_for_pods,devteam-1,app.kubernetes.io/component=frontendProxy)
+	@# Wait removed as requested
 
 uninstall-demo:
 	@echo "--- Removing Astronomy Shop ---"
