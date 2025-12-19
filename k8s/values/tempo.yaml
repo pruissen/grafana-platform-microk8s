@@ -6,36 +6,41 @@ global:
 
 replicas: 1
 
+# ---------------------------------------------------------------------
+# 1. ENABLE SERVICE PORTS (Critical Step)
+# This section tells Helm to expose ports 4317/4318 on the Service object
+# ---------------------------------------------------------------------
+traces:
+  otlp:
+    grpc:
+      enabled: true
+    http:
+      enabled: true
+
 tempo:
   updateStrategy: RollingUpdate
   resources: {}
-  #  requests:
-  #    cpu: 1000m
-  #    memory: 4Gi
-  #  limits:
-  #    cpu: 2000m
-  #    memory: 6Gi
-
   multitenancyEnabled: true
-  # -- If true, Tempo will report anonymous usage data about the shape of a deployment to Grafana Labs
   reportingEnabled: false
   retention: 24h
-
   storage:
     trace:
       backend: s3
       s3:
         endpoint: loki-minio.observability-prd.svc:9000
         insecure: true
-
   ingress:
     enabled: false
 
-  resources: {}
-  #  requests:
-  #    cpu: 1000m
-  #    memory: 4Gi
-  #  limits:
-  #    cpu: 2000m
-  #    memory: 6Gi
-
+# ---------------------------------------------------------------------
+# 2. CONFIGURE APPLICATION LISTENERS
+# This section tells the Tempo application to listen on those ports
+# ---------------------------------------------------------------------
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
