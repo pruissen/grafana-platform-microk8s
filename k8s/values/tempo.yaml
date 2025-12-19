@@ -1,123 +1,41 @@
-# k8s/values/tempo.yaml
-# Chart: tempo-distributed
-# Version: 1.59.0
-
-# 1. Global Settings
-# ✅ Enable Multitenancy
-multitenancyEnabled: true
-
-# ⚠️ FIX for "Pending" pods on Laptop:
-# Disable High Availability constraints so pods can run on the same node.
 global:
-  affinity: {}
   topologySpreadConstraints: []
   extraEnvFrom:
     - secretRef:
         name: tempo-s3-credentials
 
-# 2. Service Account
-# Required because we removed fullnameOverride; ensures clean creation.
-serviceAccount:
-  create: true
-  name: null
+replicas: 1
 
-# 3. Traces (OTLP)
-traces:
-  otlp:
-    http: { enabled: true }
-    grpc: { enabled: true }
+tempo:
+  updateStrategy: RollingUpdate
+  resources: {}
+  #  requests:
+  #    cpu: 1000m
+  #    memory: 4Gi
+  #  limits:
+  #    cpu: 2000m
+  #    memory: 6Gi
 
-# 4. Storage (S3/MinIO)
-storage:
-  trace:
-    backend: s3
-    s3:
-      bucket: tempo-data
-      endpoint: loki-minio.observability-prd.svc:9000
-      insecure: true
+  multitenancyEnabled: true
+  # -- If true, Tempo will report anonymous usage data about the shape of a deployment to Grafana Labs
+  reportingEnabled: false
+  retention: 24h
 
-# 5. Server Config
-server:
-  # ⚠️ Must be 3200 for Liveness Probes to pass
-  httpListenPort: 3200
-  grpcListenPort: 9095
+  storage:
+    trace:
+      backend: s3
+      s3:
+        endpoint: loki-minio.observability-prd.svc:9000
+        insecure: true
 
-# 6. Components (Laptop Scale)
-# - Replicas: 1 (No HA)
-# - Resources: Low Requests (Pack tight), High Limits (Allow bursts)
-# - Affinity: Disabled (Fixes "Pending")
-
-ingester:
-  replicas: 1
-  affinity: {}
-  topologySpreadConstraints: []
-  persistence:
-    enabled: true
-    size: 10Gi
-  resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { memory: 1Gi }
-
-distributor:
-  replicas: 1
-  affinity: {}
-  topologySpreadConstraints: []
-  logReceivedTraces: false
-  resources:
-    requests: { cpu: 50m, memory: 64Mi }
-    limits: { memory: 512Mi }
-
-compactor:
-  replicas: 1
-  affinity: {}
-  topologySpreadConstraints: []
-  config:
-    compaction:
-      block_retention: 24h
-  resources:
-    requests: { cpu: 50m, memory: 64Mi }
-    limits: { memory: 512Mi }
-
-querier:
-  replicas: 1
-  affinity: {}
-  topologySpreadConstraints: []
-  resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { memory: 1Gi }
-
-queryFrontend:
-  replicas: 1
-  affinity: {}
-  topologySpreadConstraints: []
-  resources:
-    requests: { cpu: 50m, memory: 64Mi }
-    limits: { memory: 512Mi }
-
-# 7. Gateway (Ingress/Auth)
-gateway:
-  enabled: true
-  replicas: 1
-  affinity: {}
-  topologySpreadConstraints: []
   ingress:
-    enabled: false # 🚫 Disabled
-  basicAuth:
     enabled: false
-  resources:
-    requests: { cpu: 20m, memory: 32Mi }
-    limits: { memory: 128Mi }
 
-# 8. Dependencies
-memcached:
-  enabled: true
-  replicaCount: 1
-  affinity: {}
-  topologySpreadConstraints: []
-  resources:
-    requests: { cpu: 20m, memory: 32Mi }
-    limits: { memory: 128Mi }
+  resources: {}
+  #  requests:
+  #    cpu: 1000m
+  #    memory: 4Gi
+  #  limits:
+  #    cpu: 2000m
+  #    memory: 6Gi
 
-metaMonitoring:
-  serviceMonitor:
-    enabled: false

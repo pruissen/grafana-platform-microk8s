@@ -1,14 +1,10 @@
 # k8s/values/alloy.yaml
-# Chart: alloy (v1.5.0)
-
 alloy:
   configMap:
     content: |
-      // 1. OTLP Receiver (Ingest from Apps)
       otelcol.receiver.otlp "default" {
         grpc { endpoint = "0.0.0.0:4317" }
         http { endpoint = "0.0.0.0:4318" }
-
         output {
           metrics = [otelcol.processor.batch.default.input]
           logs    = [otelcol.processor.batch.default.input]
@@ -16,7 +12,6 @@ alloy:
         }
       }
 
-      // 2. Processors
       otelcol.processor.batch "default" {
         output {
           metrics = [otelcol.exporter.prometheus.mimir.input]
@@ -25,70 +20,39 @@ alloy:
         }
       }
 
-      // 3. EXPORTER: METRICS (Mimir)
       otelcol.exporter.prometheus "mimir" {
         forward_to = [prometheus.remote_write.mimir.receiver]
       }
-
       prometheus.remote_write "mimir" {
-        endpoint {
-          // Pointing to Mimir Nginx Gateway
-          url = "http://mimir-mimir-distributed-nginx.observability-prd.svc:80/api/v1/push"
-          
-          // ✅ Multitenancy Header
-          headers = {
-            "X-Scope-OrgID" = "tenant1",
-          }
-        }
+        url = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+        headers = { "X-Scope-OrgID" = "tenant1" }
       }
 
-      // 4. EXPORTER: LOGS (Loki)
       otelcol.exporter.loki "default" {
         forward_to = [loki.write.default.receiver]
       }
-
       loki.write "default" {
         endpoint {
-          // Pointing to Loki Gateway
           url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
-          
-          // ✅ Multitenancy ID
           tenant_id = "tenant1"
         }
       }
 
-      // 5. EXPORTER: TRACES (Tempo)
       otelcol.exporter.otlp "tempo" {
         client {
-          // Pointing to Tempo Distributor (Long name because fullnameOverride is disabled)
-          endpoint = "tempo-tempo-distributed-distributor.observability-prd.svc.cluster.local:4317"
-          
-          // ✅ Multitenancy Header
-          headers = {
-            "X-Scope-OrgID" = "tenant1",
-          }
-          
-          tls {
-            insecure = true
-          }
+          // ✅ SHORT NAME (fullnameOverride enabled)
+          endpoint = "tempo-distributor.observability-prd.svc.cluster.local:4317"
+          headers = { "X-Scope-OrgID" = "tenant1" }
+          tls { insecure = true }
         }
       }
 
-      // 6. Infrastructure Monitoring (K8s Metrics)
-      prometheus.exporter.unix "default" {
-        include_exporter_metrics = true
-      }
+      prometheus.exporter.unix "default" { include_exporter_metrics = true }
       prometheus.scrape "node" {
         targets = prometheus.exporter.unix.default.targets
         forward_to = [prometheus.remote_write.mimir.receiver]
       }
 
-  # Laptop Sizing
   controller:
     type: DaemonSet
-    resources:
-      requests:
-        cpu: 50m
-        memory: 128Mi
-      limits:
-        memory: 512Mi
+    resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
