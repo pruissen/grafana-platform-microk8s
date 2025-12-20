@@ -1,10 +1,10 @@
 # k8s/values/tempo.yaml
 # Configuration for Monolithic Tempo (Helm Chart: tempo)
-
+global:
 # 1. Load S3 credentials
-extraEnvFrom:
-  - secretRef:
-      name: tempo-s3-credentials
+  extraEnvFrom:
+    - secretRef:
+        name: tempo-s3-credentials
 
 tempo:
   # ✅ Multitenancy Enabled (Req. X-Scope-OrgID header)

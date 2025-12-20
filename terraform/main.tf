@@ -62,6 +62,9 @@ resource "kubernetes_namespace" "devteam_1" {
 # -------------------------------------------------------------------
 # 3. ARGOCD
 # -------------------------------------------------------------------
+# -------------------------------------------------------------------
+# 3. ARGOCD
+# -------------------------------------------------------------------
 resource "helm_release" "argocd" {
   name       = "argocd"
   repository = "https://argoproj.github.io/argo-helm"
@@ -69,26 +72,9 @@ resource "helm_release" "argocd" {
   version    = "5.51.6"
   namespace  = kubernetes_namespace.argocd.metadata[0].name
 
-  set {
-    name  = "server.service.type"
-    value = "ClusterIP"
-  }
-  set {
-    name  = "redis-ha.enabled"
-    value = "false"
-  }
-  set {
-    name  = "controller.replicas"
-    value = "1"
-  }
-  set {
-    name  = "server.replicas"
-    value = "1"
-  }
-  set {
-    name  = "repoServer.replicas"
-    value = "1"
-  }
+  values = [
+    file("${path.module}/../k8s/values/argocd.yaml")
+  ]
 }
 
 # -------------------------------------------------------------------

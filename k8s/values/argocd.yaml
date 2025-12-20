@@ -1,0 +1,50 @@
+# k8s/values/argocd.yaml
+# Configuration for ArgoCD (Helm Chart: argo-cd)
+
+global:
+  domain: argocd.local
+
+# 1. ArgoCD Server (API & UI)
+server:
+  replicas: 1
+  service:
+    type: ClusterIP
+  metrics:
+    enabled: true
+    service:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8083"
+
+# 2. Application Controller (The Brain - Vital for Dashboards)
+controller:
+  replicas: 1
+  metrics:
+    enabled: true
+    # Expose app labels as metric labels (Crucial for filtering in Grafana)
+    applicationLabels:
+      enabled: true
+    service:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+
+# 3. Repo Server (Git Operations)
+repoServer:
+  replicas: 1
+  metrics:
+    enabled: true
+    service:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8084"
+
+# 4. Laptop Optimizations (Disable HA)
+redis-ha:
+  enabled: false
+
+controller:
+  replicas: 1
+
+repoServer:
+  replicas: 1
