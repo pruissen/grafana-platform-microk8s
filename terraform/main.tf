@@ -247,7 +247,7 @@ resource "kubectl_manifest" "mimir" {
 }
 
 # -------------------------------------------------------------------
-# 7. TEMPO (Traces - Distributed)
+# 7. TEMPO (Traces - Monolithic)
 # -------------------------------------------------------------------
 resource "kubectl_manifest" "tempo" {
   depends_on = [
@@ -277,8 +277,9 @@ resource "kubectl_manifest" "tempo" {
       }
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
-        chart          = "tempo-distributed"
-        targetRevision = "1.59.0" # 🚀 Updated
+        # ✅ CHANGED: Switched to Monolithic chart
+        chart          = "tempo"
+        targetRevision = "1.10.1" 
         helm = {
           values = file("${path.module}/../k8s/values/tempo.yaml")
         }

@@ -1,42 +1,23 @@
-global:
-  topologySpreadConstraints: []
-  extraEnvFrom:
-    - secretRef:
-        name: tempo-s3-credentials
+# k8s/values/tempo.yaml
+# Configuration for Monolithic Tempo (Helm Chart: tempo)
 
-replicas: 1
-
-# ---------------------------------------------------------------------
-# 1. ENABLE SERVICE PORTS (Critical Step)
-# This section tells Helm to expose ports 4317/4318 on the Service object
-# ---------------------------------------------------------------------
-traces:
-  otlp:
-    grpc:
-      enabled: true
-    http:
-      enabled: true
+# 1. Load S3 credentials
+extraEnvFrom:
+  - secretRef:
+      name: tempo-s3-credentials
 
 tempo:
-  updateStrategy: RollingUpdate
-  resources: {}
+  # ✅ Multitenancy Enabled (Req. X-Scope-OrgID header)
   multitenancyEnabled: true
-  reportingEnabled: false
-  retention: 24h
-  storage:
-    trace:
-      backend: s3
-      s3:
-        endpoint: loki-minio.observability-prd.svc:9000
-        insecure: true
-  ingress:
-    enabled: false
+  
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
 
-# ---------------------------------------------------------------------
-# 2. CONFIGURE APPLICATION LISTENERS
-# This section tells the Tempo application to listen on those ports
-# ---------------------------------------------------------------------
-distributor:
+  # Enable OTLP Receivers (gRPC & HTTP)
   receivers:
     otlp:
       protocols:
@@ -44,3 +25,39 @@ distributor:
           endpoint: "0.0.0.0:4317"
         http:
           endpoint: "0.0.0.0:4318"
+
+  # Configure Storage (MinIO via S3 Protocol)
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: tempo-data
+        endpoint: loki-minio.observability-prd.svc:9000
+        insecure: true
+        # Auth handled by env vars from 'tempo-s3-credentials'
+
+# 2. Disable unused components
+persistence:
+  enabled: false
+
+ingress:
+  enabled: false
+
+# 3. Service Configuration
+# We rely on defaults: Port 3100 for Query/Ingest, 4317/4318 for OTLP.
+service:
+  type: ClusterIP
+  # Explicitly ensuring OTLP ports are exposed
+  ports:
+    - name: prom-metrics
+      port: 3100
+      targetPort: 3100
+      protocol: TCP
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP

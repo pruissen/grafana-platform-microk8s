@@ -1,6 +1,6 @@
 # k8s/values/alloy.yaml
 alloy:
-  # ✅ CRITICAL: Expose OTLP ports so other apps can reach Alloy
+  # Expose OTLP ports so applications can push data here
   extraPorts:
     - name: otlp-grpc
       port: 4317
@@ -11,59 +11,115 @@ alloy:
       targetPort: 4318
       protocol: TCP
 
+  # Allow Alloy to read K8s Pod metadata for enrichment
+  rbac:
+    create: true
+    clusterRole:
+      rules:
+        - apiGroups: [""]
+          resources: ["pods", "namespaces", "nodes"]
+          verbs: ["get", "watch", "list"]
+        - apiGroups: ["apps"]
+          resources: ["replicasets"]
+          verbs: ["get", "watch", "list"]
+
   configMap:
     content: |
+      // ==============================================================================
+      // 1. INFRASTRUCTURE PIPELINE (Node Metrics -> platform-k8s)
+      // ==============================================================================
+      
+      prometheus.exporter.unix "default" { include_exporter_metrics = true }
+      
+      prometheus.scrape "node" {
+        targets    = prometheus.exporter.unix.default.targets
+        forward_to = [prometheus.remote_write.infra.receiver]
+      }
+
+      prometheus.remote_write "infra" {
+        endpoint {
+          url = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "platform-k8s" }
+        }
+      }
+
+      // ==============================================================================
+      // 2. APPLICATION PIPELINE (OTLP -> devteam-1)
+      // ==============================================================================
+
       otelcol.receiver.otlp "default" {
         grpc { endpoint = "0.0.0.0:4317" }
         http { endpoint = "0.0.0.0:4318" }
         output {
-          metrics = [otelcol.processor.batch.default.input]
-          logs    = [otelcol.processor.batch.default.input]
-          traces  = [otelcol.processor.batch.default.input]
+          // Send raw data to the enrichment processor first
+          metrics = [otelcol.processor.k8sattributes.enrich.input]
+          logs    = [otelcol.processor.k8sattributes.enrich.input]
+          traces  = [otelcol.processor.k8sattributes.enrich.input]
         }
       }
 
-      otelcol.processor.batch "default" {
+      // ✅ ENRICHMENT PROCESSOR
+      // Automatically adds Pod/Namespace/Node labels to all telemetry
+      otelcol.processor.k8sattributes "enrich" {
+        extract {
+          metadata = [
+            "k8s.namespace.name",
+            "k8s.pod.name",
+            "k8s.pod.uid",
+            "k8s.deployment.name",
+            "k8s.node.name",
+          ]
+        }
+        // Also capture specific high-value labels/annotations
+        pod_association {
+          source {
+            from = "connection"
+          }
+        }
         output {
-          metrics = [otelcol.exporter.prometheus.mimir.input]
-          logs    = [otelcol.exporter.loki.default.input]
-          traces  = [otelcol.exporter.otlp.tempo.input]
+          metrics = [otelcol.processor.batch.app.input]
+          logs    = [otelcol.processor.batch.app.input]
+          traces  = [otelcol.processor.batch.app.input]
         }
       }
 
-      otelcol.exporter.prometheus "mimir" {
-        forward_to = [prometheus.remote_write.mimir.receiver]
+      otelcol.processor.batch "app" {
+        output {
+          metrics = [otelcol.exporter.prometheus.app.input]
+          logs    = [otelcol.exporter.loki.app.input]
+          traces  = [otelcol.exporter.otlp.app.input]
+        }
       }
-      prometheus.remote_write "mimir" {
+
+      // -- EXPORTERS (TENANT: devteam-1) --
+
+      otelcol.exporter.prometheus "app" {
+        forward_to = [prometheus.remote_write.app.receiver]
+      }
+      prometheus.remote_write "app" {
         endpoint {
           url = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
-          headers = { "X-Scope-OrgID" = "tenant1" }
+          headers = { "X-Scope-OrgID" = "devteam-1" }
         }
       }
 
-      otelcol.exporter.loki "default" {
-        forward_to = [loki.write.default.receiver]
+      otelcol.exporter.loki "app" {
+        forward_to = [loki.write.app.receiver]
       }
-      loki.write "default" {
+      loki.write "app" {
         endpoint {
           url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
-          tenant_id = "tenant1"
+          tenant_id = "devteam-1"
         }
       }
 
-      otelcol.exporter.otlp "tempo" {
+      otelcol.exporter.otlp "app" {
         client {
-          // ✅ FIXED: Pointing to Monolithic 'tempo' service (not 'tempo-distributor')
+          // Pointing to Monolithic 'tempo' service
           endpoint = "tempo.observability-prd.svc.cluster.local:4317"
-          headers = { "X-Scope-OrgID" = "tenant1" }
+          headers = { "X-Scope-OrgID" = "devteam-1" }
           tls { insecure = true }
         }
-      }
-
-      prometheus.exporter.unix "default" { include_exporter_metrics = true }
-      prometheus.scrape "node" {
-        targets = prometheus.exporter.unix.default.targets
-        forward_to = [prometheus.remote_write.mimir.receiver]
       }
 
   controller:

@@ -32,7 +32,6 @@ datasources:
       - name: Mimir
         type: prometheus
         uid: mimir
-        # ✅ FIXED: Points to 'mimir-nginx' service
         url: http://mimir-nginx.observability-prd.svc:80/prometheus
         access: proxy
         isDefault: true
@@ -46,7 +45,6 @@ datasources:
       - name: Loki
         type: loki
         uid: loki
-        # ✅ Correct: Points to 'loki-gateway'
         url: http://loki-gateway.observability-prd.svc:80
         access: proxy
         jsonData:
@@ -63,8 +61,8 @@ datasources:
       - name: Tempo
         type: tempo
         uid: tempo
-        # ✅ FIXED: Points to Monolithic 'tempo' service (Port 3200)
-        url: http://tempo.observability-prd.svc:3200
+        # ✅ FIXED: Points to standard Monolithic port 3100
+        url: http://tempo.observability-prd.svc:3100
         access: proxy
         basicAuth: false
         jsonData:
