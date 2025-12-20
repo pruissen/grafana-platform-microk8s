@@ -1,6 +1,5 @@
 # k8s/values/alloy.yaml
 alloy:
-  # Expose OTLP ports so applications can push data here
   extraPorts:
     - name: otlp-grpc
       port: 4317
@@ -11,70 +10,152 @@ alloy:
       targetPort: 4318
       protocol: TCP
 
-  # Allow Alloy to read K8s Pod metadata for enrichment
+  # Enable full access to K8s API for Discovery & Enrichment
   rbac:
     create: true
     clusterRole:
       rules:
         - apiGroups: [""]
-          resources: ["pods", "namespaces", "nodes"]
+          resources: ["pods", "namespaces", "nodes", "services", "endpoints"]
           verbs: ["get", "watch", "list"]
         - apiGroups: ["apps"]
-          resources: ["replicasets"]
+          resources: ["replicasets", "daemonsets", "deployments", "statefulsets"]
           verbs: ["get", "watch", "list"]
 
   configMap:
     content: |
       // ==============================================================================
-      // 1. INFRASTRUCTURE PIPELINE (Node Metrics -> platform-k8s)
+      // 1. COMMON DISCOVERY (Find all Pods on the Cluster)
       // ==============================================================================
-      
-      prometheus.exporter.unix "default" { include_exporter_metrics = true }
-      
-      prometheus.scrape "node" {
-        targets    = prometheus.exporter.unix.default.targets
+      discovery.kubernetes "k8s_pods" {
+        role = "pod"
+      }
+
+      // ==============================================================================
+      // 2. PIPELINE: PLATFORM-K8S (Infrastructure)
+      //    Target: Local MicroK8s (kube-system, default, etc)
+      // ==============================================================================
+
+      // A. METRICS (Node Level)
+      prometheus.exporter.unix "node_metrics" { include_exporter_metrics = true }
+      prometheus.scrape "node_infra" {
+        targets    = prometheus.exporter.unix.node_metrics.targets
         forward_to = [prometheus.remote_write.infra.receiver]
       }
 
+      // B. LOGS (Kube-System & General Pods)
+      // Filter: Everything that is NOT devteam-1 OR observability-prd
+      discovery.relabel "infra_logs" {
+        targets = discovery.kubernetes.k8s_pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          action = "drop"
+          regex = "observability-prd|devteam-1"
+        }
+      }
+
+      loki.source.kubernetes "infra" {
+        targets    = discovery.relabel.infra_logs.output
+        forward_to = [loki.process.infra_enrich.receiver]
+      }
+
+      loki.process "infra_enrich" {
+        forward_to = [loki.write.infra.receiver]
+        stage.static_labels {
+            values = { "cluster" = "microk8s-local" }
+        }
+      }
+
+      // --> OUTPUTS (Tenant: platform-k8s)
       prometheus.remote_write "infra" {
         endpoint {
           url = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
           headers = { "X-Scope-OrgID" = "platform-k8s" }
         }
       }
+      loki.write "infra" {
+        endpoint {
+          url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          tenant_id = "platform-k8s"
+        }
+      }
+
 
       // ==============================================================================
-      // 2. APPLICATION PIPELINE (OTLP -> devteam-1)
+      // 3. PIPELINE: PLATFORM-OBS (The LGTM Stack)
+      //    Target: Namespace 'observability-prd' (Self-Monitoring)
+      // ==============================================================================
+
+      // A. METRICS (Scrape any pod in obs namespace with annotation)
+      discovery.relabel "obs_metrics" {
+        targets = discovery.kubernetes.k8s_pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          action = "keep"
+          regex = "observability-prd"
+        }
+        // Only scrape if annotation prometheus.io/scrape = true (standard k8s pattern)
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+          action = "keep"
+          regex = "true"
+        }
+      }
+      prometheus.scrape "obs_stack" {
+        targets    = discovery.relabel.obs_metrics.output
+        forward_to = [prometheus.remote_write.obs.receiver]
+      }
+
+      // B. LOGS (All pods in observability-prd)
+      discovery.relabel "obs_logs" {
+        targets = discovery.kubernetes.k8s_pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          action = "keep"
+          regex = "observability-prd"
+        }
+      }
+      loki.source.kubernetes "obs" {
+        targets    = discovery.relabel.obs_logs.output
+        forward_to = [loki.write.obs.receiver]
+      }
+
+      // --> OUTPUTS (Tenant: platform-obs)
+      prometheus.remote_write "obs" {
+        endpoint {
+          url = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "platform-obs" }
+        }
+      }
+      loki.write "obs" {
+        endpoint {
+          url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          tenant_id = "platform-obs"
+        }
+      }
+
+
+      // ==============================================================================
+      // 4. PIPELINE: DEVTEAM-1 (The Demo App)
+      //    Target: OTLP Pushed Data
       // ==============================================================================
 
       otelcol.receiver.otlp "default" {
         grpc { endpoint = "0.0.0.0:4317" }
         http { endpoint = "0.0.0.0:4318" }
         output {
-          // Send raw data to the enrichment processor first
           metrics = [otelcol.processor.k8sattributes.enrich.input]
           logs    = [otelcol.processor.k8sattributes.enrich.input]
           traces  = [otelcol.processor.k8sattributes.enrich.input]
         }
       }
 
-      // ✅ ENRICHMENT PROCESSOR
-      // Automatically adds Pod/Namespace/Node labels to all telemetry
       otelcol.processor.k8sattributes "enrich" {
         extract {
-          metadata = [
-            "k8s.namespace.name",
-            "k8s.pod.name",
-            "k8s.pod.uid",
-            "k8s.deployment.name",
-            "k8s.node.name",
-          ]
+          metadata = ["k8s.namespace.name", "k8s.pod.name", "k8s.deployment.name", "k8s.node.name"]
         }
-        // Also capture specific high-value labels/annotations
         pod_association {
-          source {
-            from = "connection"
-          }
+          source { from = "connection" }
         }
         output {
           metrics = [otelcol.processor.batch.app.input]
@@ -85,17 +166,27 @@ alloy:
 
       otelcol.processor.batch "app" {
         output {
+          // ✅ FIX: Point to the 'Bridge' exporters defined below
           metrics = [otelcol.exporter.prometheus.app.input]
           logs    = [otelcol.exporter.loki.app.input]
+          // Traces can go directly to otlp exporter
           traces  = [otelcol.exporter.otlp.app.input]
         }
       }
 
-      // -- EXPORTERS (TENANT: devteam-1) --
+      // -- BRIDGES (OTel -> Native Alloy) --
 
+      // 1. Metrics Bridge
       otelcol.exporter.prometheus "app" {
         forward_to = [prometheus.remote_write.app.receiver]
       }
+      // 2. Logs Bridge
+      otelcol.exporter.loki "app" {
+        forward_to = [loki.write.app.receiver]
+      }
+
+      // -- EXPORTERS (TENANT: devteam-1) --
+
       prometheus.remote_write "app" {
         endpoint {
           url = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
@@ -103,9 +194,6 @@ alloy:
         }
       }
 
-      otelcol.exporter.loki "app" {
-        forward_to = [loki.write.app.receiver]
-      }
       loki.write "app" {
         endpoint {
           url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
@@ -115,7 +203,6 @@ alloy:
 
       otelcol.exporter.otlp "app" {
         client {
-          // Pointing to Monolithic 'tempo' service
           endpoint = "tempo.observability-prd.svc.cluster.local:4317"
           headers = { "X-Scope-OrgID" = "devteam-1" }
           tls { insecure = true }
@@ -124,4 +211,4 @@ alloy:
 
   controller:
     type: DaemonSet
-    resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
+    resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
