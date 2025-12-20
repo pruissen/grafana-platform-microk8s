@@ -15,7 +15,10 @@ alloy:
     clusterRole:
       rules:
         - apiGroups: [""]
-          resources: ["pods", "namespaces", "nodes", "services", "endpoints", "events", "nodes/proxy", "nodes/metrics", "nodes/spec"]
+          resources: ["pods", "namespaces", "nodes", "services", "endpoints", "events", "persistentvolumes", "persistentvolumeclaims", "configmaps", "secrets"]
+          verbs: ["get", "watch", "list"]
+        - apiGroups: ["networking.k8s.io"]
+          resources: ["ingresses"]
           verbs: ["get", "watch", "list"]
         - apiGroups: ["apps"]
           resources: ["replicasets", "daemonsets", "deployments", "statefulsets"]
@@ -23,7 +26,6 @@ alloy:
         - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
           verbs: ["get"]
 
-  # ✅ CRITICAL: Enable Host Network to access Kubelet/cAdvisor on localhost
   controller:
     type: DaemonSet
     hostNetwork: true
@@ -33,29 +35,28 @@ alloy:
   configMap:
     content: |
       // ==============================================================================
-      // 1. DISCOVERY SOURCES
+      // 1. GLOBAL DISCOVERY SOURCES
       // ==============================================================================
-
-      // 1.1 Kubelet Discovery (Used for finding Pods for Logs/Metadata)
+      
       discovery.kubelet "local_pods" {
         url = "https://localhost:10250"
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        tls_config {
+        tls_config { 
           insecure_skip_verify = true 
         }
       }
 
-      // 1.2 Global Resource Discovery
-      discovery.kubernetes "k8s_services" { role = "service" }
-      discovery.kubernetes "k8s_nodes"    { role = "node" }
+      discovery.kubernetes "k8s_services"  { role = "service" }
+      discovery.kubernetes "k8s_endpoints" { role = "endpoints" }
+      discovery.kubernetes "k8s_pods"      { role = "pod" }
 
       // ==============================================================================
-      // 2. SCRAPE TARGETS (Infrastructure)
+      // 2. TENANT: PLATFORM-K8S (System Infrastructure)
+      //    Scope: kube-system, default, argocd-system
       // ==============================================================================
 
-      // --- 2.1 Kubelet (Node Stats) ---
-      // Scrape localhost directly via hostNetwork
-      prometheus.scrape "kubelet" {
+      // 2.1 Kubelet
+      prometheus.scrape "infra_kubelet" {
         targets = [{
           __address__ = "localhost:10250",
           job         = "kubelet",
@@ -64,13 +65,13 @@ alloy:
         forward_to = [prometheus.relabel.infra_enrich.receiver]
         scheme     = "https"
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        tls_config {
-          insecure_skip_verify = true
+        tls_config { 
+          insecure_skip_verify = true 
         }
       }
 
-      // --- 2.2 cAdvisor (Container Stats) ---
-      prometheus.scrape "cadvisor" {
+      // 2.2 cAdvisor
+      prometheus.scrape "infra_cadvisor" {
         targets = [{
           __address__ = "localhost:10250",
           job         = "cadvisor",
@@ -80,48 +81,42 @@ alloy:
         scheme     = "https"
         metrics_path = "/metrics/cadvisor"
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        tls_config {
-          insecure_skip_verify = true
+        tls_config { 
+          insecure_skip_verify = true 
         }
       }
 
-      // --- 2.3 Kube State Metrics ---
-      discovery.relabel "ksm" {
+      // 2.3 System Services
+      discovery.relabel "infra_services" {
         targets = discovery.kubernetes.k8s_services.targets
+        
         rule {
-          source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
-          regex = "kube-state-metrics"
-          action = "keep"
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "kube-system|default|argocd-system|ingress-nginx"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          target_label  = "job"
+        }
+        // Force Scheme for API Server
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          regex         = "kubernetes"
+          target_label  = "__scheme__"
+          replacement   = "https"
         }
       }
-      prometheus.scrape "ksm" {
-        targets    = discovery.relabel.ksm.output
+      prometheus.scrape "infra_services" {
+        targets    = discovery.relabel.infra_services.output
         forward_to = [prometheus.relabel.infra_enrich.receiver]
-        job_name   = "kube-state-metrics"
-      }
-
-      // --- 2.4 API Server ---
-      discovery.relabel "apiserver" {
-        targets = discovery.kubernetes.k8s_services.targets
-        rule {
-          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_service_name"]
-          regex = "default;kubernetes"
-          action = "keep"
-        }
-      }
-      prometheus.scrape "apiserver" {
-        targets    = discovery.relabel.apiserver.output
-        forward_to = [prometheus.relabel.infra_enrich.receiver]
-        scheme     = "https"
-        job_name   = "apiserver"
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        tls_config {
-          ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-          insecure_skip_verify = true
+        tls_config { 
+          insecure_skip_verify = true 
         }
       }
 
-      // --- 2.5 Node Exporter ---
+      // 2.4 Node Exporter
       prometheus.exporter.unix "node_metrics" { include_exporter_metrics = true }
       prometheus.scrape "node_infra" {
         targets    = prometheus.exporter.unix.node_metrics.targets
@@ -129,188 +124,223 @@ alloy:
         job_name   = "node-exporter"
       }
 
-      // --- 2.6 ArgoCD Metrics ---
-      discovery.relabel "argocd" {
-        targets = discovery.kubelet.local_pods.targets
-        rule {
-          source_labels = ["__meta_kubernetes_namespace"]
-          regex = "argocd-system"
-          action = "keep"
-        }
-        rule {
-          source_labels = ["__meta_kubernetes_pod_name"]
-          regex = "argocd-(server|application-controller|repo-server).*"
-          action = "keep"
-        }
-        // Force Job Names for Dashboards
-        rule {
-          source_labels = ["__meta_kubernetes_pod_name"]
-          regex = ".*argocd-server.*"
-          target_label = "job"
-          replacement = "argocd-server-metrics"
-        }
-        rule {
-          source_labels = ["__meta_kubernetes_pod_name"]
-          regex = ".*argocd-application-controller.*"
-          target_label = "job"
-          replacement = "argocd-controller-metrics"
-        }
-      }
-      prometheus.scrape "argocd" {
-        targets    = discovery.relabel.argocd.output
-        forward_to = [prometheus.relabel.infra_enrich.receiver]
-      }
-
-      // ==============================================================================
-      // 3. ENRICHMENT & OUTPUT (Infrastructure)
-      // ==============================================================================
-
-      // Add 'cluster' label to ALL metrics
+      // --- OUTPUT: PLATFORM-K8S ---
       prometheus.relabel "infra_enrich" {
         forward_to = [prometheus.remote_write.infra.receiver]
         rule {
-          action = "replace"
-          replacement = "microk8s-local"
+          action       = "replace"
+          replacement  = "local-k3s"
           target_label = "cluster"
         }
+        // Capture ALL Labels & Annotations
+        rule {
+          action      = "labelmap"
+          regex       = "__meta_kubernetes_pod_label_(.+)"
+          replacement = "$1"
+        }
+        rule {
+          action      = "labelmap"
+          regex       = "__meta_kubernetes_service_label_(.+)"
+          replacement = "$1"
+        }
       }
-
       prometheus.remote_write "infra" {
         endpoint {
-          url = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
           headers = { "X-Scope-OrgID" = "platform-k8s" }
         }
       }
 
       // ==============================================================================
-      // 4. LOGS (Loki)
+      // 3. TENANT: PLATFORM-OBS (LGTM Stack Monitoring)
+      //    Scope: observability-prd
       // ==============================================================================
-      
-      loki.source.kubernetes_events "cluster_events" {
-        job_name   = "integrations/kubernetes/eventhandler"
-        forward_to = [loki.write.infra.receiver]
+
+      // 3.1 Scrape ALL Services in observability-prd
+      discovery.relabel "obs_services" {
+        targets = discovery.kubernetes.k8s_services.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "observability-prd"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          regex         = ".*headless.*"
+          action        = "drop"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          target_label  = "job"
+        }
+      }
+      prometheus.scrape "obs_stack" {
+        targets    = discovery.relabel.obs_services.output
+        forward_to = [prometheus.relabel.obs_enrich.receiver]
+        scrape_interval = "30s"
       }
 
-      discovery.relabel "infra_logs" {
-        targets = discovery.kubelet.local_pods.targets
+      // --- OUTPUT: PLATFORM-OBS ---
+      prometheus.relabel "obs_enrich" {
+        forward_to = [prometheus.remote_write.obs.receiver]
         rule {
-          source_labels = ["__meta_kubernetes_namespace"]
-          action = "drop"
-          regex = "observability-prd|devteam-1"
-        }
-        // Multi-line syntax rules
-        rule {
-          source_labels = ["__meta_kubernetes_namespace"]
-          target_label  = "namespace"
-        }
-        rule {
-          source_labels = ["__meta_kubernetes_pod_name"]
-          target_label  = "pod"
-        }
-        rule {
-          source_labels = ["__meta_kubernetes_pod_container_name"]
-          target_label  = "container"
-        }
-        rule {
-          action = "replace"
-          replacement = "microk8s-local"
+          action       = "replace"
+          replacement  = "local-k3s"
           target_label = "cluster"
         }
+        rule {
+          action      = "labelmap"
+          regex       = "__meta_kubernetes_service_label_(.+)"
+          replacement = "$1"
+        }
       }
-      
-      loki.source.kubernetes "infra_pod_logs" {
-        targets    = discovery.relabel.infra_logs.output
-        forward_to = [loki.write.infra.receiver]
-      }
-
-      loki.write "infra" {
+      prometheus.remote_write "obs" {
         endpoint {
-          url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
-          tenant_id = "platform-k8s"
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "platform-obs" }
         }
       }
 
-      // ==============================================================================
-      // 5. OBSERVABILITY STACK (Self-Monitoring)
-      // ==============================================================================
+      // Logs (From Pods)
       discovery.relabel "obs_pods" {
         targets = discovery.kubelet.local_pods.targets
         rule {
           source_labels = ["__meta_kubernetes_namespace"]
-          regex = "observability-prd"
-          action = "keep"
+          regex         = "observability-prd"
+          action        = "keep"
         }
-        rule {
-          source_labels = ["__meta_kubernetes_namespace"]
-          target_label  = "namespace"
+        // Corrected Multi-line rules
+        rule { 
+          source_labels = ["__meta_kubernetes_pod_name"] 
+          target_label  = "pod" 
         }
-        rule {
-          source_labels = ["__meta_kubernetes_pod_name"]
-          target_label  = "pod"
-        }
-      }
-      prometheus.scrape "obs_stack" {
-        targets    = discovery.relabel.obs_pods.output
-        forward_to = [prometheus.relabel.obs_enrich.receiver]
-        scrape_interval = "30s"
-      }
-      prometheus.relabel "obs_enrich" {
-        forward_to = [prometheus.remote_write.obs.receiver]
-        rule {
-          action = "replace"
-          replacement = "microk8s-local"
-          target_label = "cluster"
+        rule { 
+          source_labels = ["__meta_kubernetes_namespace"] 
+          target_label  = "namespace" 
         }
       }
       loki.source.kubernetes "obs" {
         targets    = discovery.relabel.obs_pods.output
-        forward_to = [loki.write.obs.receiver]
+        forward_to = [loki.process.obs_enrich.receiver]
       }
-      prometheus.remote_write "obs" {
-        endpoint {
-          url = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
-          headers = { "X-Scope-OrgID" = "platform-obs" }
+      loki.process "obs_enrich" {
+        forward_to = [loki.write.obs.receiver]
+        stage.static_labels { 
+            values = { "cluster" = "local-k3s" } 
         }
       }
       loki.write "obs" {
         endpoint {
-          url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          url       = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
           tenant_id = "platform-obs"
         }
       }
 
       // ==============================================================================
-      // 6. DEVTEAM-1 (Demo App)
+      // 4. TENANT: DEVTEAM-1 (Application Data)
+      //    Scope: devteam-1 (Services + Pods + OTLP)
       // ==============================================================================
+
+      // 4.1 OTLP Receiver
       otelcol.receiver.otlp "default" {
         grpc { endpoint = "0.0.0.0:4317" }
         http { endpoint = "0.0.0.0:4318" }
+        output {
+          metrics = [otelcol.processor.attributes.dev_otlp.input]
+          logs    = [otelcol.processor.attributes.dev_otlp.input]
+          traces  = [otelcol.processor.attributes.dev_otlp.input]
+        }
+      }
+      
+      // Strict multi-line syntax for attributes processor
+      otelcol.processor.attributes "dev_otlp" {
+        action { 
+          key    = "cluster" 
+          value  = "local-k3s" 
+          action = "insert" 
+        }
         output {
           metrics = [otelcol.processor.batch.app.input]
           logs    = [otelcol.processor.batch.app.input]
           traces  = [otelcol.processor.batch.app.input]
         }
       }
+
+      // 4.2 Scrape ALL Services in devteam-1
+      discovery.relabel "dev_services" {
+        targets = discovery.kubernetes.k8s_services.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "devteam-1"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          target_label  = "job"
+        }
+      }
+      prometheus.scrape "dev_metrics" {
+        targets    = discovery.relabel.dev_services.output
+        forward_to = [prometheus.relabel.dev_enrich.receiver]
+      }
+
+      // --- OUTPUT: DEVTEAM-1 ---
+      prometheus.relabel "dev_enrich" {
+        forward_to = [prometheus.remote_write.app.receiver]
+        rule {
+          action       = "replace"
+          replacement  = "local-k3s"
+          target_label = "cluster"
+        }
+        rule {
+          action      = "labelmap"
+          regex       = "__meta_kubernetes_service_label_(.+)"
+          replacement = "$1"
+        }
+      }
+      prometheus.remote_write "app" {
+        endpoint {
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "devteam-1" }
+        }
+      }
+
+      // Logs
       discovery.relabel "dev_pods" {
         targets = discovery.kubelet.local_pods.targets
         rule {
           source_labels = ["__meta_kubernetes_namespace"]
-          regex = "devteam-1"
-          action = "keep"
+          regex         = "devteam-1"
+          action        = "keep"
         }
-        rule {
-          source_labels = ["__meta_kubernetes_namespace"]
-          target_label  = "namespace"
+        // Corrected Multi-line rules
+        rule { 
+          source_labels = ["__meta_kubernetes_namespace"] 
+          target_label  = "namespace" 
         }
-        rule {
-          source_labels = ["__meta_kubernetes_pod_name"]
-          target_label  = "pod"
+        rule { 
+          source_labels = ["__meta_kubernetes_pod_name"] 
+          target_label  = "pod" 
         }
       }
       loki.source.kubernetes "dev" {
         targets    = discovery.relabel.dev_pods.output
-        forward_to = [loki.write.app.receiver]
+        forward_to = [loki.process.dev_enrich.receiver]
       }
+      loki.process "dev_enrich" {
+        forward_to = [loki.write.app.receiver]
+        stage.static_labels { 
+            values = { "cluster" = "local-k3s" } 
+        }
+      }
+      loki.write "app" {
+        endpoint {
+          url       = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          tenant_id = "devteam-1"
+        }
+      }
+
+      // Traces (OTLP)
       otelcol.processor.batch "app" {
         output {
           metrics = [otelcol.exporter.prometheus.app.input]
@@ -324,22 +354,57 @@ alloy:
       otelcol.exporter.loki "app" {
         forward_to = [loki.write.app.receiver]
       }
-      prometheus.remote_write "app" {
-        endpoint {
-          url = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
-          headers = { "X-Scope-OrgID" = "devteam-1" }
-        }
-      }
-      loki.write "app" {
-        endpoint {
-          url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
-          tenant_id = "devteam-1"
-        }
-      }
       otelcol.exporter.otlp "app" {
         client {
-          endpoint = "tempo.observability-prd.svc.cluster.local:3100"
-          headers = { "X-Scope-OrgID" = "devteam-1" }
+          endpoint = "tempo.observability-prd.svc.cluster.local:4317"
+          headers  = { "X-Scope-OrgID" = "devteam-1" }
           tls { insecure = true }
+        }
+      }
+
+      // ==============================================================================
+      // 5. GLOBAL LOGS & EVENTS (Infra)
+      // ==============================================================================
+      loki.source.kubernetes_events "cluster_events" {
+        job_name   = "integrations/kubernetes/eventhandler"
+        forward_to = [loki.write.infra.receiver]
+      }
+
+      discovery.relabel "infra_logs" {
+        targets = discovery.kubelet.local_pods.targets
+        // Only scrape system namespaces here (others handled above)
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          action        = "keep"
+          regex         = "kube-system|default|argocd-system|ingress-nginx"
+        }
+        // Corrected Multi-line rules
+        rule { 
+          source_labels = ["__meta_kubernetes_namespace"] 
+          target_label  = "namespace" 
+        }
+        rule { 
+          source_labels = ["__meta_kubernetes_pod_name"] 
+          target_label  = "pod" 
+        }
+        rule { 
+          source_labels = ["__meta_kubernetes_pod_container_name"] 
+          target_label  = "container" 
+        }
+      }
+      loki.source.kubernetes "infra_pod_logs" {
+        targets    = discovery.relabel.infra_logs.output
+        forward_to = [loki.process.infra_enrich.receiver]
+      }
+      loki.process "infra_enrich" {
+        forward_to = [loki.write.infra.receiver]
+        stage.static_labels { 
+            values = { "cluster" = "local-k3s" } 
+        }
+      }
+      loki.write "infra" {
+        endpoint {
+          url       = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          tenant_id = "platform-k8s"
         }
       }

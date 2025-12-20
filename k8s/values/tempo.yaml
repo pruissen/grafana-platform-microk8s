@@ -1,15 +1,17 @@
 # k8s/values/tempo.yaml
-# Configuration for Monolithic Tempo (Helm Chart: tempo)
 global:
-# 1. Load S3 credentials
   extraEnvFrom:
     - secretRef:
         name: tempo-s3-credentials
 
 tempo:
-  # ✅ Multitenancy Enabled (Req. X-Scope-OrgID header)
   multitenancyEnabled: true
   
+  # ✅ FIX: Explicitly bind HTTP to 3100 to match Service & Grafana
+  server:
+    http_listen_port: 3100
+    grpc_listen_port: 9095
+
   resources:
     requests:
       cpu: 50m
@@ -17,7 +19,6 @@ tempo:
     limits:
       memory: 512Mi
 
-  # Enable OTLP Receivers (gRPC & HTTP)
   receivers:
     otlp:
       protocols:
@@ -26,7 +27,6 @@ tempo:
         http:
           endpoint: "0.0.0.0:4318"
 
-  # Configure Storage (MinIO via S3 Protocol)
   storage:
     trace:
       backend: s3
@@ -34,20 +34,15 @@ tempo:
         bucket: tempo-data
         endpoint: loki-minio.observability-prd.svc:9000
         insecure: true
-        # Auth handled by env vars from 'tempo-s3-credentials'
 
-# 2. Disable unused components
 persistence:
   enabled: false
 
 ingress:
   enabled: false
 
-# 3. Service Configuration
-# We rely on defaults: Port 3100 for Query/Ingest, 4317/4318 for OTLP.
 service:
   type: ClusterIP
-  # Explicitly ensuring OTLP ports are exposed
   ports:
     - name: prom-metrics
       port: 3100

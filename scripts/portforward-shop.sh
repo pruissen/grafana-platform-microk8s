@@ -4,7 +4,8 @@
 PID_FILE="/tmp/shop-portforward.pid"
 LOG_FILE="/tmp/shop-portforward.log"
 NAMESPACE="devteam-1"
-SERVICE="svc/astronomy-shop-frontend-proxy" 
+# ✅ FIXED: Correct Service Name (removed extra hyphen)
+SERVICE="svc/astronomy-shop-frontendproxy" 
 LOCAL_PORT="8800"
 REMOTE_PORT="8080"
 
