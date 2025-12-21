@@ -8,20 +8,19 @@ default:
       value: "astro-demo-app"
     - name: OTEL_COLLECTOR_NAME
       value: "alloy"
-    # ✅ Connects to Alloy Service (gRPC Port)
+    # ✅ FIXED: Points to k8s-monitoring-alloy service
     - name: OTEL_EXPORTER_OTLP_ENDPOINT
-      value: "http://alloy.observability-prd.svc:4317"
+      value: "http://k8s-monitoring-alloy.observability-prd.svc:4317"
     - name: OTEL_RESOURCE_ATTRIBUTES
       value: "service.name=astro-demo-app,space=devteam-1,deployment.environment=production"
 
 # 2. Components
-# Ensure Load Generator also talks to Alloy
 components:
   loadgenerator:
     enabled: true
     env:
       - name: OTEL_EXPORTER_OTLP_ENDPOINT
-        value: "http://alloy.observability-prd.svc:4317"
+        value: "http://k8s-monitoring-alloy.observability-prd.svc:4317"
   
   frontendProxy:
     service:
@@ -29,18 +28,8 @@ components:
       port: 8080
 
 # 3. Disable Internal Stack
-# We use our own Alloy, Jaeger(Tempo), Prometheus(Mimir), and Grafana
-opentelemetry-collector:
-  enabled: false
-
-jaeger:
-  enabled: false
-
-prometheus:
-  enabled: false
-
-grafana:
-  enabled: false
-
-opensearch:
-  enabled: false
+opentelemetry-collector: { enabled: false }
+jaeger: { enabled: false }
+prometheus: { enabled: false }
+grafana: { enabled: false }
+opensearch: { enabled: false }

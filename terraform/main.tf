@@ -62,9 +62,6 @@ resource "kubernetes_namespace" "devteam_1" {
 # -------------------------------------------------------------------
 # 3. ARGOCD
 # -------------------------------------------------------------------
-# -------------------------------------------------------------------
-# 3. ARGOCD
-# -------------------------------------------------------------------
 resource "helm_release" "argocd" {
   name       = "argocd"
   repository = "https://argoproj.github.io/argo-helm"
@@ -94,7 +91,6 @@ resource "kubernetes_secret_v1" "minio_creds" {
     namespace = "observability-prd"
   }
   data = {
-    # Keys expected by the MinIO Helm Chart
     rootUser     = "admin"
     rootPassword = random_password.minio_root_password.result
   }
@@ -102,8 +98,6 @@ resource "kubernetes_secret_v1" "minio_creds" {
 }
 
 # C. Secrets for Clients (Mimir, Loki, Tempo) to access MinIO
-# ⚠️ CRITICAL: Using AWS_... key names allows automatic detection by SDKs.
-
 resource "kubernetes_secret_v1" "mimir_s3_creds" {
   metadata {
     name      = "mimir-s3-credentials"
@@ -140,15 +134,6 @@ resource "kubernetes_secret_v1" "tempo_s3_creds" {
   type = "Opaque"
 }
 
-# D. Kube State Metrics
-resource "helm_release" "ksm" {
-  name       = "kube-state-metrics"
-  repository = "https://prometheus-community.github.io/helm-charts"
-  chart      = "kube-state-metrics"
-  namespace  = "observability-prd"
-  version    = "5.16.0"
-}
-
 # -------------------------------------------------------------------
 # 5. LOKI (Logs + Embedded MinIO)
 # -------------------------------------------------------------------
@@ -181,7 +166,7 @@ resource "kubectl_manifest" "loki" {
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "loki"
-        targetRevision = "6.24.0" # Stable single-binary version
+        targetRevision = "6.24.0"
         helm = {
           values = file("${path.module}/../k8s/values/loki.yaml")
         }
@@ -222,7 +207,6 @@ resource "kubectl_manifest" "mimir" {
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "mimir-distributed"
-        # 🔙 REVERTED: Back to the rock-solid 5.x series
         targetRevision = "5.6.0"
         helm = {
           values = file("${path.module}/../k8s/values/mimir.yaml")
@@ -238,7 +222,7 @@ resource "kubectl_manifest" "mimir" {
 resource "kubectl_manifest" "tempo" {
   depends_on = [
     helm_release.argocd, 
-    kubectl_manifest.loki, # Loki provides S3
+    kubectl_manifest.loki, 
     kubernetes_secret_v1.tempo_s3_creds
   ]
   yaml_body = yamlencode({
@@ -263,9 +247,9 @@ resource "kubectl_manifest" "tempo" {
       }
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
-        # ✅ CHANGED: Switched to Monolithic chart
         chart          = "tempo"
-        targetRevision = "1.10.1" 
+        # 🚀 UPDATED: Set to 1.24.1 as requested (AppVersion 2.9.0)
+        targetRevision = "1.24.1" 
         helm = {
           values = file("${path.module}/../k8s/values/tempo.yaml")
         }
@@ -325,7 +309,7 @@ resource "kubectl_manifest" "grafana" {
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "grafana"
-        targetRevision = "8.5.1" # 🚀 Updated
+        targetRevision = "8.5.1"
         helm = {
           values = file("${path.module}/../k8s/values/grafana.yaml")
         }
@@ -335,45 +319,26 @@ resource "kubectl_manifest" "grafana" {
 }
 
 # -------------------------------------------------------------------
-# 9. ALLOY
+# 9. K8S MONITORING (Replaces Alloy & Kube-State-Metrics)
 # -------------------------------------------------------------------
-resource "kubectl_manifest" "alloy" {
+resource "helm_release" "k8s_monitoring" {
+  name       = "k8s-monitoring"
+  repository = "https://grafana.github.io/helm-charts"
+  chart      = "k8s-monitoring"
+  # Using v1.0.0+ for the "new structure" values.yaml
+  version    = "1.0.0" 
+  namespace  = "observability-prd"
+
+  values = [
+    file("${path.module}/../k8s/values/k8s-monitoring.yaml")
+  ]
+
   depends_on = [
-    helm_release.argocd, 
-    kubectl_manifest.mimir, 
-    kubectl_manifest.loki, 
+    helm_release.argocd,
+    kubectl_manifest.mimir,
+    kubectl_manifest.loki,
     kubectl_manifest.tempo
   ]
-  yaml_body = yamlencode({
-    apiVersion = "argoproj.io/v1alpha1"
-    kind       = "Application"
-    metadata = {
-      name       = "alloy"
-      namespace  = "argocd-system"
-      finalizers = ["resources-finalizer.argocd.argoproj.io"]
-    }
-    spec = {
-      project = "default"
-      destination = {
-        server    = "https://kubernetes.default.svc"
-        namespace = "observability-prd"
-      }
-      syncPolicy = {
-        automated = {
-          prune    = true
-          selfHeal = true
-        }
-      }
-      source = {
-        repoURL        = "https://grafana.github.io/helm-charts"
-        chart          = "alloy"
-        targetRevision = "1.5.1" # 🚀 Updated
-        helm = {
-          values = file("${path.module}/../k8s/values/alloy.yaml")
-        }
-      }
-    }
-  })
 }
 
 # -------------------------------------------------------------------
@@ -381,7 +346,7 @@ resource "kubectl_manifest" "alloy" {
 # -------------------------------------------------------------------
 resource "kubectl_manifest" "astronomy_shop" {
   depends_on = [
-    kubectl_manifest.alloy,
+    helm_release.k8s_monitoring, # Depends on the new monitoring stack
     kubernetes_namespace.devteam_1
   ]
   yaml_body = yamlencode({
@@ -407,7 +372,6 @@ resource "kubectl_manifest" "astronomy_shop" {
       source = {
         repoURL        = "https://open-telemetry.github.io/opentelemetry-helm-charts"
         chart          = "opentelemetry-demo"
-        # ⚠️ LOCKED: Version pinned to 0.31.0 for stability as requested
         targetRevision = "0.31.0"
         helm = {
           values = file("${path.module}/../k8s/values/astronomy-shop.yaml")
