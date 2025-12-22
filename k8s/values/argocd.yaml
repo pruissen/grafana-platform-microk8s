@@ -39,12 +39,16 @@ repoServer:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8084"
 
-# 4. Laptop Optimizations (Disable HA)
+# 4. Notifications Controller (New: Enable Metrics)
+notifications:
+  enabled: true
+  metrics:
+    enabled: true
+    service:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9001"
+
+# 5. Laptop Optimizations (Disable HA)
 redis-ha:
   enabled: false
-
-controller:
-  replicas: 1
-
-repoServer:
-  replicas: 1
