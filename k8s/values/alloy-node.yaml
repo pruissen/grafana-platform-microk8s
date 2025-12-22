@@ -1,0 +1,176 @@
+# k8s/values/alloy-node.yaml
+# ROLE: DaemonSet for Node-Level Observability (Logs, Host Metrics)
+
+fullnameOverride: alloy-node
+
+# ✅ ROOT LEVEL: Controller (Must be lowercase 'daemonset')
+controller:
+  type: 'daemonset'
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  resources: 
+    requests: 
+      cpu: 100m 
+      memory: 256Mi 
+    limits: 
+      memory: 1Gi
+
+# ✅ ROOT LEVEL: Service (Disabled for Node Agent)
+service:
+  enabled: false
+
+# ✅ ROOT LEVEL: RBAC
+rbac:
+  create: true
+  clusterRole:
+    rules:
+      - apiGroups: [""]
+        resources: ["pods", "pods/log", "namespaces", "nodes", "nodes/proxy", "services", "endpoints", "events", "configmaps", "secrets"]
+        verbs: ["get", "watch", "list"]
+      - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+        verbs: ["get"]
+
+# ✅ ROOT LEVEL: Alloy Config
+alloy:
+  clustering:
+    enabled: false
+
+  configMap:
+    content: |
+      // 1. DISCOVERY
+      discovery.kubelet "local_pods" {
+        url = "https://localhost:10250"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+      }
+
+      // 2. METRICS (Host)
+      prometheus.scrape "infra_kubelet" {
+        targets = [{
+          __address__ = "localhost:10250",
+          job         = "kubelet",
+          instance    = env("HOSTNAME"), 
+        }]
+        forward_to = [prometheus.relabel.infra_enrich.receiver]
+        scheme     = "https"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+      }
+
+      prometheus.scrape "infra_cadvisor" {
+        targets = [{
+          __address__ = "localhost:10250",
+          job         = "cadvisor",
+          instance    = env("HOSTNAME"),
+        }]
+        forward_to = [prometheus.relabel.infra_enrich.receiver]
+        scheme     = "https"
+        metrics_path = "/metrics/cadvisor"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+      }
+
+      prometheus.exporter.unix "node_metrics" { include_exporter_metrics = true }
+      prometheus.scrape "node_infra" {
+        targets    = prometheus.exporter.unix.node_metrics.targets
+        forward_to = [prometheus.relabel.infra_enrich.receiver]
+        job_name   = "node-exporter"
+      }
+
+      prometheus.relabel "infra_enrich" {
+        forward_to = [prometheus.remote_write.infra.receiver]
+        rule {
+          action       = "replace"
+          replacement  = "k3s-local"
+          target_label = "cluster"
+        }
+      }
+
+      prometheus.remote_write "infra" {
+        endpoint {
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "platform-k8s" }
+        }
+      }
+
+      // 3. LOGS
+      discovery.relabel "logs_targets" {
+        targets = discovery.kubelet.local_pods.targets
+        rule { 
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace" 
+        }
+        rule { 
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod" 
+        }
+        rule { 
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container" 
+        }
+        rule { 
+          action        = "replace"
+          replacement   = "k3s-local"
+          target_label  = "cluster"
+        }
+      }
+
+      // 3.1 PLATFORM-K8S
+      discovery.relabel "logs_k8s" {
+        targets = discovery.relabel.logs_targets.output
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "kube-system|default|argocd-system|public|ingress-nginx"
+          action        = "keep"
+        }
+      }
+      loki.source.kubernetes "k8s" {
+        targets    = discovery.relabel.logs_k8s.output
+        forward_to = [loki.write.k8s.receiver]
+      }
+      loki.write "k8s" {
+        endpoint {
+          url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          tenant_id = "platform-k8s"
+        }
+      }
+
+      // 3.2 PLATFORM-OBS
+      discovery.relabel "logs_obs" {
+        targets = discovery.relabel.logs_targets.output
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "observability-prd"
+          action        = "keep"
+        }
+      }
+      loki.source.kubernetes "obs" {
+        targets    = discovery.relabel.logs_obs.output
+        forward_to = [loki.write.obs.receiver]
+      }
+      loki.write "obs" {
+        endpoint {
+          url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          tenant_id = "platform-obs"
+        }
+      }
+
+      // 3.3 DEVTEAM-1
+      discovery.relabel "logs_dev" {
+        targets = discovery.relabel.logs_targets.output
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "devteam-1"
+          action        = "keep"
+        }
+      }
+      loki.source.kubernetes "dev" {
+        targets    = discovery.relabel.logs_dev.output
+        forward_to = [loki.write.dev.receiver]
+      }
+      loki.write "dev" {
+        endpoint {
+          url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          tenant_id = "devteam-1"
+        }
+      }

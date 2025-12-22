@@ -1,0 +1,154 @@
+# k8s/values/alloy-cluster.yaml
+# ROLE: Deployment for Cluster-Wide Metrics & Events
+
+fullnameOverride: alloy-cluster
+
+# ✅ ROOT LEVEL: Deployment
+controller:
+  type: deployment
+  replicas: 1
+  resources: 
+    requests: 
+      cpu: 50m 
+      memory: 128Mi 
+    limits: 
+      memory: 512Mi
+
+# ✅ ROOT LEVEL: Service
+service:
+  enabled: true
+  type: ClusterIP
+
+# ✅ ROOT LEVEL: RBAC
+rbac:
+  create: true
+  clusterRole:
+    rules:
+      - apiGroups: [""]
+        resources: ["pods", "namespaces", "nodes", "services", "endpoints", "events"]
+        verbs: ["get", "watch", "list"]
+
+# ✅ ROOT LEVEL: App Config
+alloy:
+  clustering:
+    enabled: false
+
+  configMap:
+    content: |
+      // 1. CLUSTER EVENTS
+      loki.source.kubernetes_events "cluster_events" {
+        job_name   = "integrations/kubernetes/eventhandler"
+        forward_to = [loki.process.events_enrich.receiver]
+      }
+
+      loki.process "events_enrich" {
+        forward_to = [loki.write.infra.receiver]
+        stage.static_labels { 
+            values = { "cluster" = "k3s-local" } 
+        }
+      }
+
+      loki.write "infra" {
+        endpoint {
+          url       = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          tenant_id = "platform-k8s"
+        }
+      }
+
+      // 2. CLUSTER METRICS
+      discovery.kubernetes "k8s_services"  { role = "service" }
+
+      // 2.1 PLATFORM-K8S
+      discovery.relabel "infra_services" {
+        targets = discovery.kubernetes.k8s_services.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "kube-system|default|argocd-system|public|ingress-nginx"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          target_label  = "job"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          regex         = "kubernetes"
+          target_label  = "__scheme__"
+          replacement   = "https"
+        }
+      }
+
+      prometheus.scrape "infra_services" {
+        targets    = discovery.relabel.infra_services.output
+        forward_to = [prometheus.remote_write.infra.receiver]
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+      }
+
+      prometheus.remote_write "infra" {
+        endpoint {
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "platform-k8s" }
+        }
+        external_labels = { "cluster" = "k3s-local" }
+      }
+
+      // 2.2 PLATFORM-OBS
+      discovery.relabel "obs_services" {
+        targets = discovery.kubernetes.k8s_services.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "observability-prd"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          regex         = ".*headless.*"
+          action        = "drop"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          target_label  = "job"
+        }
+      }
+      
+      prometheus.scrape "obs_services" {
+        targets    = discovery.relabel.obs_services.output
+        forward_to = [prometheus.remote_write.obs.receiver]
+        scrape_interval = "30s"
+      }
+
+      prometheus.remote_write "obs" {
+        endpoint {
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "platform-obs" }
+        }
+        external_labels = { "cluster" = "k3s-local" }
+      }
+
+      // 2.3 DEVTEAM-1
+      discovery.relabel "dev_services" {
+        targets = discovery.kubernetes.k8s_services.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "devteam-1"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          target_label  = "job"
+        }
+      }
+
+      prometheus.scrape "dev_services" {
+        targets    = discovery.relabel.dev_services.output
+        forward_to = [prometheus.remote_write.dev.receiver]
+      }
+
+      prometheus.remote_write "dev" {
+        endpoint {
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "devteam-1" }
+        }
+        external_labels = { "cluster" = "k3s-local" }
+      }

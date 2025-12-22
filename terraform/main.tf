@@ -337,18 +337,22 @@ resource "kubectl_manifest" "grafana" {
 # -------------------------------------------------------------------
 # 9. ALLOY
 # -------------------------------------------------------------------
-resource "kubectl_manifest" "alloy" {
+# -------------------------------------------------------------------
+# 9. ALLOY (SPLIT DEPLOYMENT)
+# -------------------------------------------------------------------
+
+# 9.1 Alloy Node (DaemonSet - Logs & Host Metrics)
+resource "kubectl_manifest" "alloy_node" {
   depends_on = [
     helm_release.argocd, 
     kubectl_manifest.mimir, 
-    kubectl_manifest.loki, 
-    kubectl_manifest.tempo
+    kubectl_manifest.loki
   ]
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1"
     kind       = "Application"
     metadata = {
-      name       = "alloy"
+      name       = "alloy-node"
       namespace  = "argocd-system"
       finalizers = ["resources-finalizer.argocd.argoproj.io"]
     }
@@ -359,17 +363,87 @@ resource "kubectl_manifest" "alloy" {
         namespace = "observability-prd"
       }
       syncPolicy = {
-        automated = {
-          prune    = true
-          selfHeal = true
-        }
+        automated = { prune = true, selfHeal = true }
       }
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "alloy"
-        targetRevision = "1.5.1" # 🚀 Updated
+        targetRevision = "1.5.1"
         helm = {
-          values = file("${path.module}/../k8s/values/alloy.yaml")
+          values = file("${path.module}/../k8s/values/alloy-node.yaml")
+        }
+      }
+    }
+  })
+}
+
+# 9.2 Alloy Cluster (Deployment - Cluster Events & Service Metrics)
+resource "kubectl_manifest" "alloy_cluster" {
+  depends_on = [
+    helm_release.argocd, 
+    kubectl_manifest.mimir, 
+    kubectl_manifest.loki
+  ]
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name       = "alloy-cluster"
+      namespace  = "argocd-system"
+      finalizers = ["resources-finalizer.argocd.argoproj.io"]
+    }
+    spec = {
+      project = "default"
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "observability-prd"
+      }
+      syncPolicy = {
+        automated = { prune = true, selfHeal = true }
+      }
+      source = {
+        repoURL        = "https://grafana.github.io/helm-charts"
+        chart          = "alloy"
+        targetRevision = "1.5.1"
+        helm = {
+          values = file("${path.module}/../k8s/values/alloy-cluster.yaml")
+        }
+      }
+    }
+  })
+}
+
+# 9.3 Alloy App Gateway (Deployment - OTLP Gateway)
+resource "kubectl_manifest" "alloy_app_gateway" {
+  depends_on = [
+    helm_release.argocd, 
+    kubectl_manifest.mimir, 
+    kubectl_manifest.loki,
+    kubectl_manifest.tempo
+  ]
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name       = "alloy-app-gateway"
+      namespace  = "argocd-system"
+      finalizers = ["resources-finalizer.argocd.argoproj.io"]
+    }
+    spec = {
+      project = "default"
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "observability-prd"
+      }
+      syncPolicy = {
+        automated = { prune = true, selfHeal = true }
+      }
+      source = {
+        repoURL        = "https://grafana.github.io/helm-charts"
+        chart          = "alloy"
+        targetRevision = "1.5.1"
+        helm = {
+          values = file("${path.module}/../k8s/values/alloy-app-gateway.yaml")
         }
       }
     }
@@ -381,7 +455,7 @@ resource "kubectl_manifest" "alloy" {
 # -------------------------------------------------------------------
 resource "kubectl_manifest" "astronomy_shop" {
   depends_on = [
-    kubectl_manifest.alloy,
+    kubectl_manifest.alloy_app_gateway, # Depends on the Gateway now
     kubernetes_namespace.devteam_1
   ]
   yaml_body = yamlencode({
@@ -399,15 +473,11 @@ resource "kubectl_manifest" "astronomy_shop" {
         namespace = "devteam-1"
       }
       syncPolicy = {
-        automated = {
-          prune    = true
-          selfHeal = true
-        }
+        automated = { prune = true, selfHeal = true }
       }
       source = {
         repoURL        = "https://open-telemetry.github.io/opentelemetry-helm-charts"
         chart          = "opentelemetry-demo"
-        # ⚠️ LOCKED: Version pinned to 0.31.0 for stability as requested
         targetRevision = "0.31.0"
         helm = {
           values = file("${path.module}/../k8s/values/astronomy-shop.yaml")

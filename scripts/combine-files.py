@@ -4,7 +4,14 @@ import os
 # Configuration
 SOURCE_DIR = "."
 OUTPUT_FILE = "combined.txt"
-EXTENSIONS = {".sh", ".py", ".tf", ".yaml", ".yml"}
+
+# Files to include based on extension
+EXTENSIONS = {".sh", ".py", ".tf", ".yaml", ".yml", ".json", ".md"}
+
+# Specific filenames to include (regardless of extension)
+INCLUDE_FILES = {"Makefile", "README.md", "README.MD", ".gitignore"}
+
+# Directories to ignore
 IGNORE_DIRS = {".git", ".idea", "__pycache__", "venv", "node_modules", ".terraform"}
 
 def combine_files(source_dir, output_file):
@@ -16,11 +23,17 @@ def combine_files(source_dir, output_file):
 
                 for filename in files:
                     ext = os.path.splitext(filename)[1]
-                    if ext in EXTENSIONS:
+                    
+                    # Check if file matches extension OR is in the specific include list
+                    if ext in EXTENSIONS or filename in INCLUDE_FILES:
+                        # Skip the output file itself to avoid infinite loops/bloat
+                        if filename == OUTPUT_FILE:
+                            continue
+
                         file_path = os.path.join(root, filename)
                         
                         # Create a header
-                        header =f"\n{'='*50}\nFILE: {file_path}\n{'='*50}\n"
+                        header = f"\n{'='*50}\nFILE: {file_path}\n{'='*50}\n"
                         
                         try:
                             with open(file_path, "r", encoding="utf-8") as infile:

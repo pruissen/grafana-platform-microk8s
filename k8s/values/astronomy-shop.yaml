@@ -1,3 +1,6 @@
+==================================================
+FILE: ./k8s/values/astronomy-shop.yaml
+==================================================
 # k8s/values/astronomy-shop.yaml
 # Compatible with opentelemetry-demo chart v0.31.0
 
@@ -8,39 +11,29 @@ default:
       value: "astro-demo-app"
     - name: OTEL_COLLECTOR_NAME
       value: "alloy"
-    # ✅ Connects to Alloy Service (gRPC Port)
+    # ✅ UPDATED: Connects to Alloy App Gateway
     - name: OTEL_EXPORTER_OTLP_ENDPOINT
-      value: "http://alloy.observability-prd.svc:4317"
+      value: "http://alloy-app-gateway.observability-prd.svc:4317"
     - name: OTEL_RESOURCE_ATTRIBUTES
       value: "service.name=astro-demo-app,space=devteam-1,deployment.environment=production"
 
 # 2. Components
-# Ensure Load Generator also talks to Alloy
 components:
   loadgenerator:
     enabled: true
     env:
+      # ✅ UPDATED: Connects to Alloy App Gateway
       - name: OTEL_EXPORTER_OTLP_ENDPOINT
-        value: "http://alloy.observability-prd.svc:4317"
-  
+        value: "http://alloy-app-gateway.observability-prd.svc:4317"
+   
   frontendProxy:
     service:
       type: ClusterIP
       port: 8080
 
-# 3. Disable Internal Stack
-# We use our own Alloy, Jaeger(Tempo), Prometheus(Mimir), and Grafana
-opentelemetry-collector:
-  enabled: false
-
-jaeger:
-  enabled: false
-
-prometheus:
-  enabled: false
-
-grafana:
-  enabled: false
-
-opensearch:
-  enabled: false
+# 3. Disable Internal Stack (Use our own Mimir/Loki/Tempo)
+opentelemetry-collector: { enabled: false }
+jaeger: { enabled: false }
+prometheus: { enabled: false }
+grafana: { enabled: false }
+opensearch: { enabled: false }

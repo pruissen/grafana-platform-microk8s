@@ -1,4 +1,9 @@
-.PHONY: all install-k3s install-argocd install-prereqs install-mimir install-loki install-tempo install-grafana install-alloy install-demo install-all uninstall-all remove-all clean clean-mimir clean-loki clean-tempo clean-grafana clean-alloy clean-demo bootstrap forward nuke
+.PHONY: all install-k3s install-argocd install-prereqs install-mimir install-loki install-tempo install-grafana \
+        install-alloy-node install-alloy-cluster install-alloy-app-gateway install-demo \
+        install-all uninstall-all remove-all clean \
+        clean-mimir clean-loki clean-tempo clean-grafana clean-alloy clean-demo \
+        uninstall-alloy-node uninstall-alloy-cluster uninstall-alloy-app-gateway \
+        bootstrap forward nuke clean-legacy-alloy
 
 USER_NAME ?= $(shell whoami)
 NODE_IFACE ?= $(shell ip route get 1.1.1.1 | awk '{print $$5;exit}')
@@ -8,17 +13,17 @@ NODE_IP ?= $(shell ip route get 1.1.1.1 | awk '{print $$7;exit}')
 # Macro to wait for all pods in a namespace to be ready
 # Usage: $(call wait_for_pods,namespace,label-selector)
 define wait_for_pods
-	@echo "⏳ Waiting for pods in '$(1)' to be ready..."
-	@timeout=300; \
-	until kubectl get pods -n $(1) -l $(2) -o jsonpath='{.items[*].status.phase}' | grep -v "Pending" | grep -v "ContainerCreating" | grep -q "Running\|Succeeded"; do \
-		echo "   ...waiting for $(1) pods ($(2))..."; \
-		sleep 5; \
-		timeout=$$((timeout-5)); \
-		if [ $$timeout -le 0 ]; then echo "❌ Timeout waiting for $(1)"; exit 1; fi; \
-	done
-	@# Double check readiness probes
-	@kubectl wait --for=condition=ready pod -n $(1) -l $(2) --timeout=300s >/dev/null 2>&1 || true
-	@echo "✅ Pods in '$(1)' are ready."
+    @echo "⏳ Waiting for pods in '$(1)' to be ready..."
+    @timeout=300; \
+    until kubectl get pods -n $(1) -l $(2) -o jsonpath='{.items[*].status.phase}' | grep -v "Pending" | grep -v "ContainerCreating" | grep -q "Running\|Succeeded"; do \
+        echo "   ...waiting for $(1) pods ($(2))..."; \
+        sleep 5; \
+        timeout=$$((timeout-5)); \
+        if [ $$timeout -le 0 ]; then echo "❌ Timeout waiting for $(1)"; exit 1; fi; \
+    done
+    @# Double check readiness probes
+    @kubectl wait --for=condition=ready pod -n $(1) -l $(2) --timeout=300s >/dev/null 2>&1 || true
+    @echo "✅ Pods in '$(1)' are ready."
 endef
 
 # ---------------------------------------------------------
@@ -26,9 +31,9 @@ endef
 # ---------------------------------------------------------
 all: install-k3s install-argocd install-all
 
-install-all: install-prereqs install-loki install-mimir install-tempo install-grafana bootstrap install-alloy install-demo 
+install-all: install-prereqs install-loki install-mimir install-tempo install-grafana bootstrap install-alloy-node install-alloy-cluster install-alloy-app-gateway install-demo 
 
-uninstall-all: uninstall-demo uninstall-alloy uninstall-grafana uninstall-tempo uninstall-mimir uninstall-loki uninstall-prereqs
+uninstall-all: uninstall-demo uninstall-alloy-app-gateway uninstall-alloy-cluster uninstall-alloy-node uninstall-grafana uninstall-tempo uninstall-mimir uninstall-loki uninstall-prereqs
 
 remove-all: uninstall-all nuke
 
@@ -168,32 +173,82 @@ clean-grafana:
 	@kubectl delete pvc -n observability-prd -l app.kubernetes.io/name=grafana --force --grace-period=0 2>/dev/null || true
 	@kubectl delete secret -n observability-prd grafana-admin-creds --force --grace-period=0 2>/dev/null || true
 
-# --- ALLOY ---
-install-alloy:
-	@echo "--- Installing Grafana Alloy ---"
-	cd terraform && terraform apply -auto-approve -target=kubectl_manifest.alloy
-	@echo "⏳ Waiting for Alloy DaemonSet definition..."
-	@# Loop until the DaemonSet actually exists in the API
-	@timeout=60; until kubectl get daemonset alloy -n observability-prd >/dev/null 2>&1; do \
+# ---------------------------------------------------------
+# 📡 ALLOY COMPONENTS (Split Architecture)
+# ---------------------------------------------------------
+
+# Helper to remove the old conflicting monolithic application
+clean-legacy-alloy:
+	@echo "🧹 Checking for legacy 'alloy' application..."
+	@kubectl delete application alloy -n argocd-system --ignore-not-found --wait=true
+	@# Double check resources are gone before proceeding
+	@kubectl delete daemonset alloy -n observability-prd --ignore-not-found --wait=true
+	@echo "✅ Legacy Alloy cleaned."
+
+# 1. Alloy Node (DaemonSet)
+install-alloy-node: clean-legacy-alloy
+	@echo "--- Installing Alloy Node (DaemonSet) ---"
+	cd terraform && terraform apply -auto-approve -target=kubectl_manifest.alloy_node
+	@echo "⏳ Waiting for Alloy Node definition..."
+	@# Wait loop to ensure ArgoCD creates the DaemonSet before we check status
+	@timeout=60; until kubectl get daemonset alloy-node -n observability-prd >/dev/null 2>&1; do \
 		echo "   ...waiting for ArgoCD to create resource..."; \
 		sleep 2; \
 	done
-	@echo "⏳ Waiting for Alloy rollout..."
-	@kubectl rollout status daemonset/alloy -n observability-prd --timeout=120s
+	@echo "⏳ Waiting for Alloy Node rollout..."
+	@kubectl rollout status daemonset/alloy-node -n observability-prd --timeout=120s
+	@echo "✅ Alloy Node Ready."
 
-uninstall-alloy: remove-alloy
-	@echo "✅ Alloy Uninstalled."
+uninstall-alloy-node:
+	@echo "--- Uninstalling Alloy Node ---"
+	cd terraform && terraform destroy -auto-approve -target=kubectl_manifest.alloy_node || true
 
-remove-alloy:
-	@echo "--- Removing Grafana Alloy ---"
-	cd terraform && terraform destroy -auto-approve -target=kubectl_manifest.alloy
-	@make clean-alloy
+# 2. Alloy Cluster (Deployment)
+install-alloy-cluster: clean-legacy-alloy
+	@echo "--- Installing Alloy Cluster (Deployment) ---"
+	cd terraform && terraform apply -auto-approve -target=kubectl_manifest.alloy_cluster
+	@echo "⏳ Waiting for Alloy Cluster definition..."
+	@timeout=60; until kubectl get deployment alloy-cluster -n observability-prd >/dev/null 2>&1; do \
+		echo "   ...waiting for ArgoCD to create resource..."; \
+		sleep 2; \
+	done
+	@echo "⏳ Waiting for Alloy Cluster rollout..."
+	@kubectl rollout status deployment/alloy-cluster -n observability-prd --timeout=120s
+	@echo "✅ Alloy Cluster Ready."
+
+uninstall-alloy-cluster:
+	@echo "--- Uninstalling Alloy Cluster ---"
+	cd terraform && terraform destroy -auto-approve -target=kubectl_manifest.alloy_cluster || true
+
+# 3. Alloy App Gateway (Deployment)
+install-alloy-app-gateway: clean-legacy-alloy
+	@echo "--- Installing Alloy App Gateway (OTLP) ---"
+	cd terraform && terraform apply -auto-approve -target=kubectl_manifest.alloy_app_gateway
+	@echo "⏳ Waiting for Alloy App Gateway definition..."
+	@timeout=60; until kubectl get deployment alloy-app-gateway -n observability-prd >/dev/null 2>&1; do \
+		echo "   ...waiting for ArgoCD to create resource..."; \
+		sleep 2; \
+	done
+	@echo "⏳ Waiting for Alloy App Gateway rollout..."
+	@kubectl rollout status deployment/alloy-app-gateway -n observability-prd --timeout=120s
+	@echo "✅ Alloy App Gateway Ready."
+
+uninstall-alloy-app-gateway:
+	@echo "--- Uninstalling Alloy App Gateway ---"
+	cd terraform && terraform destroy -auto-approve -target=kubectl_manifest.alloy_app_gateway || true
 
 clean-alloy:
-	@echo "🧹 Cleaning up Alloy Resources..."
-	@kubectl delete all -n observability-prd -l app.kubernetes.io/name=alloy --force --grace-period=0 2>/dev/null || true
-	@kubectl delete pvc -n observability-prd -l app.kubernetes.io/name=alloy --force --grace-period=0 2>/dev/null || true
+	@echo "🧹 Cleaning up ALL Alloy Resources..."
+	# Clean Node
+	@kubectl delete all -n observability-prd -l app.kubernetes.io/instance=alloy-node --force --grace-period=0 2>/dev/null || true
+	# Clean Cluster
+	@kubectl delete all -n observability-prd -l app.kubernetes.io/instance=alloy-cluster --force --grace-period=0 2>/dev/null || true
+	# Clean Gateway
+	@kubectl delete all -n observability-prd -l app.kubernetes.io/instance=alloy-app-gateway --force --grace-period=0 2>/dev/null || true
+	# Safety cleanup for old/monolithic deployments
 	@kubectl delete daemonset -n observability-prd alloy --force --grace-period=0 2>/dev/null || true
+	@kubectl delete deployment -n observability-prd alloy --force --grace-period=0 2>/dev/null || true
+	@kubectl delete pvc -n observability-prd -l app.kubernetes.io/name=alloy --force --grace-period=0 2>/dev/null || true
 
 # --- DEMO ---
 install-demo:

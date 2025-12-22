@@ -1,0 +1,108 @@
+# k8s/values/alloy-app-gateway.yaml
+# ROLE: Gateway for Application Monitoring (OTEL)
+
+fullnameOverride: alloy-app-gateway
+
+# ✅ ROOT LEVEL: Deployment
+controller:
+  type: deployment
+  replicas: 1
+  resources: 
+    requests: 
+      cpu: 100m 
+      memory: 256Mi 
+    limits: 
+      memory: 1Gi
+
+# ✅ ROOT LEVEL: Service
+service:
+  enabled: true
+  type: ClusterIP
+
+# ✅ ROOT LEVEL: RBAC
+rbac:
+  create: true
+
+# ✅ ROOT LEVEL: App Config
+alloy:
+  clustering:
+    enabled: false
+
+  # ✅ NESTED: ExtraPorts MUST be under 'alloy' in this chart version
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+  configMap:
+    content: |
+      // 1. OTLP RECEIVER
+      otelcol.receiver.otlp "default" {
+        grpc { endpoint = "0.0.0.0:4317" }
+        http { endpoint = "0.0.0.0:4318" }
+        output {
+          metrics = [otelcol.processor.attributes.dev_otlp.input]
+          logs    = [otelcol.processor.attributes.dev_otlp.input]
+          traces  = [otelcol.processor.attributes.dev_otlp.input]
+        }
+      }
+      
+      // 2. PROCESSOR
+      otelcol.processor.attributes "dev_otlp" {
+        action { 
+          key    = "cluster" 
+          value  = "k3s-local" 
+          action = "insert" 
+        }
+        output {
+          metrics = [otelcol.processor.batch.app.input]
+          logs    = [otelcol.processor.batch.app.input]
+          traces  = [otelcol.processor.batch.app.input]
+        }
+      }
+
+      otelcol.processor.batch "app" {
+        output {
+          metrics = [otelcol.exporter.prometheus.app.input]
+          logs    = [otelcol.exporter.loki.app.input]
+          traces  = [otelcol.exporter.otlp.app.input]
+        }
+      }
+
+      // 3. EXPORTERS
+      
+      // 3.1 Metrics -> Mimir
+      otelcol.exporter.prometheus "app" {
+        forward_to = [prometheus.remote_write.app.receiver]
+      }
+      prometheus.remote_write "app" {
+        endpoint {
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "devteam-1" }
+        }
+      }
+
+      // 3.2 Logs -> Loki
+      otelcol.exporter.loki "app" {
+        forward_to = [loki.write.app.receiver]
+      }
+      loki.write "app" {
+        endpoint {
+          url       = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
+          tenant_id = "devteam-1"
+        }
+      }
+
+      // 3.3 Traces -> Tempo
+      otelcol.exporter.otlp "app" {
+        client {
+          endpoint = "tempo.observability-prd.svc.cluster.local:4317"
+          headers  = { "X-Scope-OrgID" = "devteam-1" }
+          tls { insecure = true }
+        }
+      }
