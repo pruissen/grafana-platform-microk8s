@@ -61,7 +61,6 @@ datasources:
       - name: Tempo
         type: tempo
         uid: tempo
-        # ✅ FIXED: Points to standard Monolithic port 3100
         url: http://tempo.observability-prd.svc:3100
         access: proxy
         basicAuth: false
