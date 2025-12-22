@@ -1,8 +1,8 @@
 .PHONY: all install-k3s install-argocd install-prereqs install-mimir install-loki install-tempo install-grafana \
-        install-alloy-node install-alloy-cluster install-alloy-app-gateway install-demo \
+        install-node-exporter install-alloy-node install-alloy-cluster install-alloy-app-gateway install-demo \
         install-all uninstall-all remove-all clean \
         clean-mimir clean-loki clean-tempo clean-grafana clean-alloy clean-demo \
-        uninstall-alloy-node uninstall-alloy-cluster uninstall-alloy-app-gateway \
+        uninstall-alloy-node uninstall-alloy-cluster uninstall-alloy-app-gateway uninstall-node-exporter \
         bootstrap forward nuke clean-legacy-alloy
 
 USER_NAME ?= $(shell whoami)
@@ -31,9 +31,9 @@ endef
 # ---------------------------------------------------------
 all: install-k3s install-argocd install-all
 
-install-all: install-prereqs install-loki install-mimir install-tempo install-grafana bootstrap install-alloy-node install-alloy-cluster install-alloy-app-gateway install-demo 
+install-all: install-prereqs install-loki install-mimir install-tempo install-grafana bootstrap install-node-exporter install-alloy-node install-alloy-cluster install-alloy-app-gateway install-demo 
 
-uninstall-all: uninstall-demo uninstall-alloy-app-gateway uninstall-alloy-cluster uninstall-alloy-node uninstall-grafana uninstall-tempo uninstall-mimir uninstall-loki uninstall-prereqs
+uninstall-all: uninstall-demo uninstall-alloy-app-gateway uninstall-alloy-cluster uninstall-alloy-node uninstall-node-exporter uninstall-grafana uninstall-tempo uninstall-mimir uninstall-loki uninstall-prereqs
 
 remove-all: uninstall-all nuke
 
@@ -184,6 +184,23 @@ clean-legacy-alloy:
 	@# Double check resources are gone before proceeding
 	@kubectl delete daemonset alloy -n observability-prd --ignore-not-found --wait=true
 	@echo "✅ Legacy Alloy cleaned."
+
+# --- NODE EXPORTER ---
+install-node-exporter:
+	@echo "--- Installing Node Exporter ---"
+	cd terraform && terraform apply -auto-approve -target=kubectl_manifest.node_exporter
+	@echo "⏳ Waiting for Node Exporter rollout..."
+	@# Node Exporter uses 'prometheus-node-exporter' as the app name label usually
+	@timeout=60; until kubectl get daemonset node-exporter-prometheus-node-exporter -n observability-prd >/dev/null 2>&1; do \
+		echo "   ...waiting for ArgoCD to create resource..."; \
+		sleep 2; \
+	done
+	@kubectl rollout status daemonset/node-exporter-prometheus-node-exporter -n observability-prd --timeout=120s
+	@echo "✅ Node Exporter Ready."
+
+uninstall-node-exporter:
+	@echo "--- Uninstalling Node Exporter ---"
+	cd terraform && terraform destroy -auto-approve -target=kubectl_manifest.node_exporter || true
 
 # 1. Alloy Node (DaemonSet)
 install-alloy-node: clean-legacy-alloy

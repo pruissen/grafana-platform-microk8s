@@ -1,0 +1,19 @@
+# k8s/values/node-exporter.yaml
+service:
+  port: 9100
+  annotations:
+    prometheus.io/scrape: "false"
+
+prometheus:
+  monitor:
+    enabled: false
+
+# Enable collectors useful for IO and System monitoring
+extraArgs:
+  - --collector.filesystem
+  - --collector.diskstats
+  - --collector.cpu
+  - --collector.meminfo
+  - --collector.loadavg
+  - --collector.netdev
+  - --collector.uname

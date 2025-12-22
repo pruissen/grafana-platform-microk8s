@@ -3,23 +3,17 @@
 
 fullnameOverride: alloy-cluster
 
-# ✅ ROOT LEVEL: Deployment
 controller:
   type: deployment
   replicas: 1
   resources: 
-    requests: 
-      cpu: 50m 
-      memory: 128Mi 
-    limits: 
-      memory: 512Mi
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
 
-# ✅ ROOT LEVEL: Service
 service:
   enabled: true
   type: ClusterIP
 
-# ✅ ROOT LEVEL: RBAC
 rbac:
   create: true
   clusterRole:
@@ -28,7 +22,6 @@ rbac:
         resources: ["pods", "namespaces", "nodes", "services", "endpoints", "events"]
         verbs: ["get", "watch", "list"]
 
-# ✅ ROOT LEVEL: App Config
 alloy:
   clustering:
     enabled: false
@@ -58,7 +51,7 @@ alloy:
       // 2. CLUSTER METRICS
       discovery.kubernetes "k8s_services"  { role = "service" }
 
-      // 2.1 PLATFORM-K8S
+      // 2.1 PLATFORM-K8S (Infrastructure)
       discovery.relabel "infra_services" {
         targets = discovery.kubernetes.k8s_services.targets
         rule {
@@ -85,6 +78,26 @@ alloy:
         tls_config { insecure_skip_verify = true }
       }
 
+      // ✅ 2.2 KUBE STATE METRICS (Explicit Scrape)
+      // We grab KSM explicitly to send it to platform-k8s, even though it lives in observability-prd
+      discovery.relabel "ksm" {
+        targets = discovery.kubernetes.k8s_services.targets
+        rule {
+          source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+          regex         = "kube-state-metrics"
+          action        = "keep"
+        }
+        rule {
+          target_label = "job"
+          replacement  = "kube-state-metrics"
+        }
+      }
+
+      prometheus.scrape "ksm" {
+        targets    = discovery.relabel.ksm.output
+        forward_to = [prometheus.remote_write.infra.receiver]
+      }
+
       prometheus.remote_write "infra" {
         endpoint {
           url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
@@ -93,17 +106,26 @@ alloy:
         external_labels = { "cluster" = "k3s-local" }
       }
 
-      // 2.2 PLATFORM-OBS
+      // 2.3 PLATFORM-OBS (Monitoring Stack)
       discovery.relabel "obs_services" {
         targets = discovery.kubernetes.k8s_services.targets
+        
+        // Keep observability-prd
         rule {
           source_labels = ["__meta_kubernetes_namespace"]
           regex         = "observability-prd"
           action        = "keep"
         }
+        // Drop Headless
         rule {
           source_labels = ["__meta_kubernetes_service_name"]
           regex         = ".*headless.*"
+          action        = "drop"
+        }
+        // ✅ NEW: Drop Kube State Metrics (handled above in 2.2) to avoid duplicates
+        rule {
+          source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+          regex         = "kube-state-metrics"
           action        = "drop"
         }
         rule {
@@ -126,7 +148,7 @@ alloy:
         external_labels = { "cluster" = "k3s-local" }
       }
 
-      // 2.3 DEVTEAM-1
+      // 2.4 DEVTEAM-1
       discovery.relabel "dev_services" {
         targets = discovery.kubernetes.k8s_services.targets
         rule {

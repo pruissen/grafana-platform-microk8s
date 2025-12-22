@@ -62,9 +62,6 @@ resource "kubernetes_namespace" "devteam_1" {
 # -------------------------------------------------------------------
 # 3. ARGOCD
 # -------------------------------------------------------------------
-# -------------------------------------------------------------------
-# 3. ARGOCD
-# -------------------------------------------------------------------
 resource "helm_release" "argocd" {
   name       = "argocd"
   repository = "https://argoproj.github.io/argo-helm"
@@ -94,7 +91,6 @@ resource "kubernetes_secret_v1" "minio_creds" {
     namespace = "observability-prd"
   }
   data = {
-    # Keys expected by the MinIO Helm Chart
     rootUser     = "admin"
     rootPassword = random_password.minio_root_password.result
   }
@@ -102,8 +98,6 @@ resource "kubernetes_secret_v1" "minio_creds" {
 }
 
 # C. Secrets for Clients (Mimir, Loki, Tempo) to access MinIO
-# ⚠️ CRITICAL: Using AWS_... key names allows automatic detection by SDKs.
-
 resource "kubernetes_secret_v1" "mimir_s3_creds" {
   metadata {
     name      = "mimir-s3-credentials"
@@ -147,6 +141,13 @@ resource "helm_release" "ksm" {
   chart      = "kube-state-metrics"
   namespace  = "observability-prd"
   version    = "5.16.0"
+
+  # ✅ NEW: Expose all Node labels as metric labels
+  # This ensures 'kubernetes_io_hostname' and others appear in 'kube_node_info'
+  set {
+    name  = "metricLabelsAllowlist[0]"
+    value = "nodes=[*]"
+  }
 }
 
 # -------------------------------------------------------------------
@@ -181,7 +182,7 @@ resource "kubectl_manifest" "loki" {
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "loki"
-        targetRevision = "6.24.0" # Stable single-binary version
+        targetRevision = "6.24.0" 
         helm = {
           values = file("${path.module}/../k8s/values/loki.yaml")
         }
@@ -222,7 +223,6 @@ resource "kubectl_manifest" "mimir" {
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "mimir-distributed"
-        # 🔙 REVERTED: Back to the rock-solid 5.x series
         targetRevision = "5.6.0"
         helm = {
           values = file("${path.module}/../k8s/values/mimir.yaml")
@@ -238,7 +238,7 @@ resource "kubectl_manifest" "mimir" {
 resource "kubectl_manifest" "tempo" {
   depends_on = [
     helm_release.argocd, 
-    kubectl_manifest.loki, # Loki provides S3
+    kubectl_manifest.loki, 
     kubernetes_secret_v1.tempo_s3_creds
   ]
   yaml_body = yamlencode({
@@ -263,7 +263,6 @@ resource "kubectl_manifest" "tempo" {
       }
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
-        # ✅ CHANGED: Switched to Monolithic chart
         chart          = "tempo"
         targetRevision = "1.10.1" 
         helm = {
@@ -325,7 +324,7 @@ resource "kubectl_manifest" "grafana" {
       source = {
         repoURL        = "https://grafana.github.io/helm-charts"
         chart          = "grafana"
-        targetRevision = "8.5.1" # 🚀 Updated
+        targetRevision = "8.5.1"
         helm = {
           values = file("${path.module}/../k8s/values/grafana.yaml")
         }
@@ -335,18 +334,53 @@ resource "kubectl_manifest" "grafana" {
 }
 
 # -------------------------------------------------------------------
-# 9. ALLOY
+# 9. NODE EXPORTER (Standalone)
 # -------------------------------------------------------------------
+resource "kubectl_manifest" "node_exporter" {
+  depends_on = [
+    helm_release.argocd,
+    kubernetes_namespace.observability
+  ]
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name       = "node-exporter"
+      namespace  = "argocd-system"
+      finalizers = ["resources-finalizer.argocd.argoproj.io"]
+    }
+    spec = {
+      project = "default"
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "observability-prd"
+      }
+      syncPolicy = {
+        automated = { prune = true, selfHeal = true }
+      }
+      source = {
+        repoURL        = "https://prometheus-community.github.io/helm-charts"
+        chart          = "prometheus-node-exporter"
+        targetRevision = "4.30.0" 
+        helm = {
+          values = file("${path.module}/../k8s/values/node-exporter.yaml")
+        }
+      }
+    }
+  })
+}
+
 # -------------------------------------------------------------------
-# 9. ALLOY (SPLIT DEPLOYMENT)
+# 10. ALLOY (SPLIT DEPLOYMENT)
 # -------------------------------------------------------------------
 
-# 9.1 Alloy Node (DaemonSet - Logs & Host Metrics)
+# 10.1 Alloy Node (DaemonSet - Logs & Host Metrics)
 resource "kubectl_manifest" "alloy_node" {
   depends_on = [
     helm_release.argocd, 
     kubectl_manifest.mimir, 
-    kubectl_manifest.loki
+    kubectl_manifest.loki,
+    kubectl_manifest.node_exporter # Depends on Exporter
   ]
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1"
@@ -377,7 +411,7 @@ resource "kubectl_manifest" "alloy_node" {
   })
 }
 
-# 9.2 Alloy Cluster (Deployment - Cluster Events & Service Metrics)
+# 10.2 Alloy Cluster (Deployment - Cluster Events & Service Metrics)
 resource "kubectl_manifest" "alloy_cluster" {
   depends_on = [
     helm_release.argocd, 
@@ -413,7 +447,7 @@ resource "kubectl_manifest" "alloy_cluster" {
   })
 }
 
-# 9.3 Alloy App Gateway (Deployment - OTLP Gateway)
+# 10.3 Alloy App Gateway (Deployment - OTLP Gateway)
 resource "kubectl_manifest" "alloy_app_gateway" {
   depends_on = [
     helm_release.argocd, 
@@ -451,11 +485,11 @@ resource "kubectl_manifest" "alloy_app_gateway" {
 }
 
 # -------------------------------------------------------------------
-# 10. OTEL DEMO (Astronomy Shop)
+# 11. OTEL DEMO (Astronomy Shop)
 # -------------------------------------------------------------------
 resource "kubectl_manifest" "astronomy_shop" {
   depends_on = [
-    kubectl_manifest.alloy_app_gateway, # Depends on the Gateway now
+    kubectl_manifest.alloy_app_gateway, 
     kubernetes_namespace.devteam_1
   ]
   yaml_body = yamlencode({

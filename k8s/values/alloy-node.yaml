@@ -1,25 +1,17 @@
 # k8s/values/alloy-node.yaml
-# ROLE: DaemonSet for Node-Level Observability (Logs, Host Metrics)
-
 fullnameOverride: alloy-node
 
-# ✅ ROOT LEVEL: Controller (Must be lowercase 'daemonset')
 controller:
   type: 'daemonset'
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
   resources: 
-    requests: 
-      cpu: 100m 
-      memory: 256Mi 
-    limits: 
-      memory: 1Gi
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
 
-# ✅ ROOT LEVEL: Service (Disabled for Node Agent)
 service:
   enabled: false
 
-# ✅ ROOT LEVEL: RBAC
 rbac:
   create: true
   clusterRole:
@@ -30,24 +22,35 @@ rbac:
       - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
         verbs: ["get"]
 
-# ✅ ROOT LEVEL: Alloy Config
 alloy:
   clustering:
     enabled: false
+
+  # ✅ FIXED: Correct location for Environment Variables
+  extraEnv:
+    - name: HOST_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    - name: HOSTNAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
 
   configMap:
     content: |
       // 1. DISCOVERY
       discovery.kubelet "local_pods" {
-        url = "https://localhost:10250"
+        // Construct URL using the injected Host IP
+        url = "https://" + env("HOST_IP") + ":10250"
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
         tls_config { insecure_skip_verify = true }
       }
 
-      // 2. METRICS (Host)
+      // 2. METRICS (Kubelet & cAdvisor)
       prometheus.scrape "infra_kubelet" {
         targets = [{
-          __address__ = "localhost:10250",
+          __address__ = env("HOST_IP") + ":10250",
           job         = "kubelet",
           instance    = env("HOSTNAME"), 
         }]
@@ -59,7 +62,7 @@ alloy:
 
       prometheus.scrape "infra_cadvisor" {
         targets = [{
-          __address__ = "localhost:10250",
+          __address__ = env("HOST_IP") + ":10250",
           job         = "cadvisor",
           instance    = env("HOSTNAME"),
         }]
@@ -70,13 +73,41 @@ alloy:
         tls_config { insecure_skip_verify = true }
       }
 
-      prometheus.exporter.unix "node_metrics" { include_exporter_metrics = true }
-      prometheus.scrape "node_infra" {
-        targets    = prometheus.exporter.unix.node_metrics.targets
-        forward_to = [prometheus.relabel.infra_enrich.receiver]
-        job_name   = "node-exporter"
+      // 3. SCRAPE EXTERNAL NODE EXPORTER
+      discovery.kubernetes "node_exporter" {
+        role = "pod"
       }
 
+      discovery.relabel "node_exporter_local" {
+        targets = discovery.kubernetes.node_exporter.targets
+        
+        // Filter 1: Must be the node-exporter app
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          regex         = "prometheus-node-exporter"
+          action        = "keep"
+        }
+        
+        // Filter 2: Must be on the same Node as this Alloy instance
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          regex         = env("HOSTNAME")
+          action        = "keep"
+        }
+
+        // Set Job Name
+        rule {
+          target_label = "job"
+          replacement  = "node-exporter"
+        }
+      }
+
+      prometheus.scrape "node_infra" {
+        targets    = discovery.relabel.node_exporter_local.output
+        forward_to = [prometheus.relabel.infra_enrich.receiver]
+      }
+
+      // 4. ENRICHMENT & OUTPUT
       prometheus.relabel "infra_enrich" {
         forward_to = [prometheus.remote_write.infra.receiver]
         rule {
@@ -93,29 +124,33 @@ alloy:
         }
       }
 
-      // 3. LOGS
+      // 5. LOGS (Standard Kubelet Logs)
       discovery.relabel "logs_targets" {
         targets = discovery.kubelet.local_pods.targets
-        rule { 
+        
+        rule {
           source_labels = ["__meta_kubernetes_namespace"]
-          target_label  = "namespace" 
+          target_label  = "namespace"
         }
-        rule { 
+        
+        rule {
           source_labels = ["__meta_kubernetes_pod_name"]
-          target_label  = "pod" 
+          target_label  = "pod"
         }
-        rule { 
+        
+        rule {
           source_labels = ["__meta_kubernetes_pod_container_name"]
-          target_label  = "container" 
+          target_label  = "container"
         }
-        rule { 
-          action        = "replace"
-          replacement   = "k3s-local"
-          target_label  = "cluster"
+        
+        rule {
+          action       = "replace"
+          replacement  = "k3s-local"
+          target_label = "cluster"
         }
       }
 
-      // 3.1 PLATFORM-K8S
+      // 5.1 PLATFORM-K8S
       discovery.relabel "logs_k8s" {
         targets = discovery.relabel.logs_targets.output
         rule {
@@ -135,7 +170,7 @@ alloy:
         }
       }
 
-      // 3.2 PLATFORM-OBS
+      // 5.2 PLATFORM-OBS
       discovery.relabel "logs_obs" {
         targets = discovery.relabel.logs_targets.output
         rule {
@@ -155,7 +190,7 @@ alloy:
         }
       }
 
-      // 3.3 DEVTEAM-1
+      // 5.3 DEVTEAM-1
       discovery.relabel "logs_dev" {
         targets = discovery.relabel.logs_targets.output
         rule {
