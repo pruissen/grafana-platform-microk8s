@@ -18,9 +18,9 @@ DASHBOARD_GROUPS = [
         # 1. SHARED INFRASTRUCTURE
         "target_orgs": ["platform-k8s", "platform-obs", "devteam-1"],
         "dashboards": [
-            {"id": "315", "type": "id", "folder": "Kubernetes", "name": "K8s Nodes"},
-            {"id": "13332", "type": "id", "folder": "Kubernetes", "name": "Kube State Metrics v2"},
-            {"id": "15760", "type": "id", "folder": "Kubernetes", "name": "Kubernetes Overview"},
+            # Removed: 315 (K8s Nodes), 13332 (KSM), 15760 (Overview)
+            # Added: 18680 (The standard "Latest" Global View)
+            {"id": "18680", "type": "id", "folder": "Kubernetes", "name": "k8s-dashboard (latest)"},
             {"id": "14584", "type": "id", "folder": "GitOps", "name": "ArgoCD"}
         ]
     },
@@ -30,7 +30,7 @@ DASHBOARD_GROUPS = [
         "dashboards": [
             {"id": "13639", "type": "id", "folder": "Observability", "name": "Loki Logs"},
             {"id": "15132", "type": "id", "folder": "Observability", "name": "Tempo Operational"},
-            {"id": "18671", "type": "id", "folder": "Observability", "name": "Alloy Overview"}, # Swapped to stable ID
+            # Removed: 18671 (Alloy Overview)
             {"id": "3590", "type": "id", "folder": "Observability", "name": "Grafana Internals"}
         ]
     },
@@ -44,12 +44,7 @@ DASHBOARD_GROUPS = [
                 "type": "url",
                 "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/demo-dashboard.json"
             },
-            {
-                "name": "OTel Demo: APM / Services",
-                "folder": "Applications",
-                "type": "url",
-                "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/apm-dashboard.json"
-            },
+            # Removed: "OTel Demo: APM / Services"
             {
                 "name": "OTel Demo: Exemplars",
                 "folder": "Applications",
