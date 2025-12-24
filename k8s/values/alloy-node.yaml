@@ -26,7 +26,6 @@ alloy:
   clustering:
     enabled: false
 
-  # ✅ FIXED: Correct location for Environment Variables
   extraEnv:
     - name: HOST_IP
       valueFrom:
@@ -41,7 +40,6 @@ alloy:
     content: |
       // 1. DISCOVERY
       discovery.kubelet "local_pods" {
-        // Construct URL using the injected Host IP
         url = "https://" + env("HOST_IP") + ":10250"
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
         tls_config { insecure_skip_verify = true }
@@ -207,5 +205,25 @@ alloy:
         endpoint {
           url = "http://loki-gateway.observability-prd.svc:80/loki/api/v1/push"
           tenant_id = "devteam-1"
+        }
+      }
+
+      // 6. SELF MONITORING (Internal Metrics -> platform-obs)
+      // ✅ This fixes the missing dashboard variables
+      prometheus.scrape "alloy_self" {
+        targets = [{
+          __address__ = "127.0.0.1:12345",
+          cluster     = "k3s-local",
+          namespace   = "observability-prd",
+          job         = "alloy",
+          instance    = env("HOSTNAME"),
+        }]
+        forward_to = [prometheus.remote_write.obs.receiver]
+      }
+
+      prometheus.remote_write "obs" {
+        endpoint {
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "platform-obs" }
         }
       }

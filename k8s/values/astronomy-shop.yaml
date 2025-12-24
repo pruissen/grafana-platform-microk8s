@@ -8,7 +8,7 @@ default:
     - name: OTEL_SERVICE_NAME
       value: "astro-demo-app"
     - name: OTEL_COLLECTOR_NAME
-      value: "alloy"
+      value: "alloy-app-gateway"
     # ✅ UPDATED: Connects to Alloy App Gateway
     - name: OTEL_EXPORTER_OTLP_ENDPOINT
       value: "http://alloy-app-gateway.observability-prd.svc:4317"

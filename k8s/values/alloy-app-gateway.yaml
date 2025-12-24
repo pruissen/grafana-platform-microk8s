@@ -106,3 +106,23 @@ alloy:
           tls { insecure = true }
         }
       }
+
+      // 4. SELF MONITORING (Internal Metrics -> platform-obs)
+      // ✅ This fixes the missing dashboard variables
+      prometheus.scrape "alloy_self" {
+        targets = [{
+          __address__ = "127.0.0.1:12345",
+          cluster     = "k3s-local",
+          namespace   = "observability-prd",
+          job         = "alloy",
+          instance    = "alloy-app-gateway",
+        }]
+        forward_to = [prometheus.remote_write.obs.receiver]
+      }
+
+      prometheus.remote_write "obs" {
+        endpoint {
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "platform-obs" }
+        }
+      }

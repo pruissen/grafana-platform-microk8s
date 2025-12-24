@@ -66,6 +66,8 @@ datasources:
         basicAuth: false
         jsonData:
           httpHeaderName1: "X-Scope-OrgID"
+          
+          # ✅ LINK 1: Traces to Logs (Loki)
           tracesToLogsV2:
             datasourceUid: 'loki'
             spanStartTimeShift: '1h'
@@ -75,6 +77,8 @@ datasources:
             filterBySpanID: false
             customQuery: true
             query: 'method="${__span.tags.method}"'
+          
+          # ✅ LINK 2: Traces to Span Metrics (Mimir)
           tracesToMetrics:
             datasourceUid: 'mimir'
             spanStartTimeShift: '1h'
@@ -83,22 +87,32 @@ datasources:
             queries:
               - name: 'Sample Rate'
                 query: 'sum(rate(traces_spanmetrics_latency_bucket{$__tags}[5m]))'
+          
+          # ✅ LINK 3: Service Graph / Node Graph (Mimir)
           serviceMap:
             datasourceUid: 'mimir'
           nodeGraph:
             enabled: true
+          
+          # Search settings
           search:
             hide: false
           lokiSearch:
             datasourceUid: 'loki'
+            
         secureJsonData:
           httpHeaderValue1: "tenant1"
 
-# Service (ClusterIP only - No Ingress)
+# Service Configuration
 service:
   type: ClusterIP
   port: 80
   targetPort: 3000
+  # ✅ ADDED: Annotations for Alloy/Prometheus discovery
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3000"
+    prometheus.io/path: "/metrics"
 
 ingress:
   enabled: false

@@ -13,16 +13,9 @@ ADMIN_USER = "admin"
 OUTPUT_FILE = "bootstrap-results.json"
 
 # --- ⚡️ FEDERATION CONFIGURATION ⚡️ ---
-# Define which organizations should see which data tenants.
-# Format: "Organization Name": "Actual X-Scope-OrgID Header Value"
 FEDERATED_ACCESS = {
-    # Platform Admins: See everything (infra + apps)
     "platform-obs": "platform-obs|platform-k8s",
-    
-    # Dev Teams: See their app data + shared infrastructure metrics
     "devteam-1": "devteam-1|platform-k8s",
-    
-    # K8s Admins: Just the raw infrastructure
     "platform-k8s": "platform-k8s"
 }
 
@@ -33,7 +26,9 @@ DASHBOARD_GROUPS = [
         "target_orgs": ["platform-k8s", "platform-obs", "devteam-1"],
         "dashboards": [
             {"id": "18680", "type": "id", "folder": "Kubernetes", "name": "k8s-dashboard (latest)"},
-            {"id": "14584", "type": "id", "folder": "GitOps", "name": "ArgoCD"}
+            {"id": "14584", "type": "id", "folder": "GitOps", "name": "ArgoCD"},
+            # ✅ ADDED: Kubernetes Global View (ID 15661)
+            {"id": "15661", "type": "id", "folder": "Kubernetes", "name": "Kubernetes / Views / Global"} 
         ]
     },
     {
@@ -43,76 +38,28 @@ DASHBOARD_GROUPS = [
             {"id": "13639", "type": "id", "folder": "Observability", "name": "Loki Logs"},
             {"id": "15132", "type": "id", "folder": "Observability", "name": "Tempo Operational"},
             {"id": "3590", "type": "id", "folder": "Observability", "name": "Grafana Internals"},
-            # ✅ ADDED: Detailed Alloy Dashboards
-            {
-                "type": "url", "folder": "Alloy", "name": "Alloy Cluster Node",
-                "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-cluster-node.json"
-            },
-            {
-                "type": "url", "folder": "Alloy", "name": "Alloy Cluster Overview",
-                "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-cluster-overview.json"
-            },
-            {
-                "type": "url", "folder": "Alloy", "name": "Alloy Controller",
-                "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-controller.json"
-            },
-            {
-                "type": "url", "folder": "Alloy", "name": "Alloy Logs",
-                "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-logs.json"
-            },
-            {
-                "type": "url", "folder": "Alloy", "name": "Alloy Loki",
-                "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-loki.json"
-            },
-            {
-                "type": "url", "folder": "Alloy", "name": "Alloy OpenTelemetry",
-                "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-opentelemetry.json"
-            },
-            {
-                "type": "url", "folder": "Alloy", "name": "Alloy Remote Write",
-                "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-prometheus-remote-write.json"
-            },
-            {
-                "type": "url", "folder": "Alloy", "name": "Alloy Resources",
-                "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-resources.json"
-            }
+            # 🗑️ REMOVED: DCGM / NVIDIA Dashboards
+            
+            # Alloy Dashboards
+            {"type": "url", "folder": "Alloy", "name": "Alloy Cluster Node", "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-cluster-node.json"},
+            {"type": "url", "folder": "Alloy", "name": "Alloy Cluster Overview", "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-cluster-overview.json"},
+            {"type": "url", "folder": "Alloy", "name": "Alloy Controller", "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-controller.json"},
+            {"type": "url", "folder": "Alloy", "name": "Alloy Logs", "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-logs.json"},
+            {"type": "url", "folder": "Alloy", "name": "Alloy Loki", "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-loki.json"},
+            {"type": "url", "folder": "Alloy", "name": "Alloy OpenTelemetry", "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-opentelemetry.json"},
+            {"type": "url", "folder": "Alloy", "name": "Alloy Remote Write", "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-prometheus-remote-write.json"},
+            {"type": "url", "folder": "Alloy", "name": "Alloy Resources", "url": "https://raw.githubusercontent.com/pruissen/grafana-platform-microk8s/alloy-improvements/dashboards/alloy/alloy-resources.json"}
         ]
     },
     {
         # 3. APPLICATIONS (DevTeam Only)
         "target_orgs": ["devteam-1"],
         "dashboards": [
-            {
-                "name": "OTel Demo: General",
-                "folder": "Applications",
-                "type": "url",
-                "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/demo-dashboard.json"
-            },
-            {
-                "name": "OTel Demo: Exemplars",
-                "folder": "Applications",
-                "type": "url",
-                "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/exemplars-dashboard.json"
-            },
-            {
-                "name": "OTel Demo: Linux Metrics",
-                "folder": "Applications",
-                "type": "url",
-                "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/linux-dashboard.json"
-            },
-            # 🗑️ REMOVED: Collector & OpenSearch dashboards (Not needed for app team)
-            {
-                "name": "OTel Demo: PostgreSQL",
-                "folder": "Applications",
-                "type": "url",
-                "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/postgresql-dashboard.json"
-            },
-            {
-                "name": "OTel Demo: Span Metrics",
-                "folder": "Applications",
-                "type": "url",
-                "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/spanmetrics-dashboard.json"
-            }
+            {"name": "OTel Demo: General", "folder": "Applications", "type": "url", "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/demo-dashboard.json"},
+            {"name": "OTel Demo: Exemplars", "folder": "Applications", "type": "url", "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/exemplars-dashboard.json"},
+            {"name": "OTel Demo: Linux Metrics", "folder": "Applications", "type": "url", "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/linux-dashboard.json"},
+            {"name": "OTel Demo: PostgreSQL", "folder": "Applications", "type": "url", "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/postgresql-dashboard.json"},
+            {"name": "OTel Demo: Span Metrics", "folder": "Applications", "type": "url", "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/spanmetrics-dashboard.json"}
         ]
     }
 ]
@@ -136,7 +83,6 @@ def get_auth():
     return (ADMIN_USER, ADMIN_PASS)
 
 def get_org_id_by_name(name):
-    """Finds the numeric ID of an Organization by its name."""
     try:
         res = requests.get(f"{GRAFANA_URL}/api/orgs/name/{name}", auth=get_auth())
         if res.status_code == 200:
@@ -173,10 +119,6 @@ def get_dashboard_json(source, is_url=False):
     return None
 
 def resolve_inputs(dashboard_json):
-    """
-    Dynamically maps the dashboard's required inputs (from __inputs)
-    to our actual Datasource names (Mimir, Loki, Tempo).
-    """
     inputs = []
     if "__inputs" not in dashboard_json:
         return inputs
@@ -273,9 +215,6 @@ def create_datasource(org_id, org_name, ds_type, name, url, default_tenant_id):
         "jsonData": {}, "secureJsonData": {}
     }
     
-    # --- 🔥 MANAGEMENT ZONE LOGIC (Federated Access) 🔥 ---
-    # Look up the tenant configuration from the dictionary. 
-    # If not found, fall back to the default tenant_id.
     final_tenant_id = FEDERATED_ACCESS.get(org_name, default_tenant_id)
     
     if ds_type in ["prometheus", "loki", "tempo"]:

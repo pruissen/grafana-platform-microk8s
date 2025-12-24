@@ -7,10 +7,16 @@ tempo:
   # ---------------------------------------------------------------------
   multitenancyEnabled: true
   
+  # ✅ FIXED: Use full config structure to inject headers
   metricsGenerator:
     enabled: true
-    # Points to Mimir's Distributor
-    remoteWriteUrl: "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+    config:
+      storage:
+        remote_write:
+          - url: "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+            headers:
+              X-Scope-OrgID: "devteam-1" # 👈 Required for Mimir Auth
+            send_exemplars: true
 
   # ---------------------------------------------------------------------
   # 2. CONFIGURATION OVERRIDES
@@ -19,8 +25,8 @@ tempo:
     defaults:
       metrics_generator:
         processors:
-          - service-graphs
-          - span-metrics
+          - service-graphs  # <--- Generates Node Graph data
+          - span-metrics    # <--- Generates RED metrics (Rate, Error, Duration)
 
   # ---------------------------------------------------------------------
   # 3. STORAGE (S3 / MinIO)
@@ -39,13 +45,6 @@ tempo:
       wal:
         path: /var/tempo/wal
 
-  # # ---------------------------------------------------------------------
-  # # 4. SERVER & PROTOCOLS
-  # # ---------------------------------------------------------------------
-  # server:
-  #   http_listen_port: 3200
-  #   grpc_listen_port: 9095
-
   # ---------------------------------------------------------------------
   # 5. CREDENTIALS (Nested Safety)
   # ---------------------------------------------------------------------
@@ -57,9 +56,8 @@ tempo:
   # 6. PROBES (Startup Stability Fix)
   # ---------------------------------------------------------------------
   # Tempo 2.9+ Compactor Ring initialization takes ~60s.
-  # We MUST wait longer than that, or K8s will kill the pod before it starts.
   livenessProbe:
-    initialDelaySeconds: 120  # increased to 2 minutes to be safe
+    initialDelaySeconds: 120
     periodSeconds: 15
     timeoutSeconds: 5
     failureThreshold: 3

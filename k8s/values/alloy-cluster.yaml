@@ -24,7 +24,7 @@ rbac:
 
 alloy:
   clustering:
-    enabled: false
+    enabled: true
 
   configMap:
     content: |
@@ -63,7 +63,6 @@ alloy:
           source_labels = ["__meta_kubernetes_service_name"]
           target_label  = "job"
         }
-        // ✅ FIXED: Map Namespace
         rule {
           source_labels = ["__meta_kubernetes_namespace"]
           target_label  = "namespace"
@@ -83,8 +82,7 @@ alloy:
         tls_config { insecure_skip_verify = true }
       }
 
-      // ✅ 2.2 KUBE STATE METRICS (Explicit Scrape)
-      // We grab KSM explicitly to send it to platform-k8s, even though it lives in observability-prd
+      // 2.2 KUBE STATE METRICS (Explicit Scrape)
       discovery.relabel "ksm" {
         targets = discovery.kubernetes.k8s_services.targets
         rule {
@@ -111,4 +109,22 @@ alloy:
         external_labels = { "cluster" = "k3s-local" }
       }
 
-      //
+      // 3. SELF MONITORING (Internal Metrics -> platform-obs)
+      // ✅ This fixes the missing dashboard variables
+      prometheus.scrape "alloy_self" {
+        targets = [{
+          __address__ = "127.0.0.1:12345",
+          cluster     = "k3s-local",
+          namespace   = "observability-prd",
+          job         = "alloy",
+          instance    = "alloy-cluster",
+        }]
+        forward_to = [prometheus.remote_write.obs.receiver]
+      }
+
+      prometheus.remote_write "obs" {
+        endpoint {
+          url     = "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
+          headers = { "X-Scope-OrgID" = "platform-obs" }
+        }
+      }

@@ -119,8 +119,8 @@ minio:
       policy: none
 
 # Disable monitoring sidecars to save resources
-monitoring:
-  dashboards: { enabled: false }
-  rules: { enabled: false }
-  serviceMonitor: { enabled: false }
-  selfMonitoring: { enabled: false, lokiCanary: { enabled: false } }
+# monitoring:
+#   dashboards: { enabled: false }
+#   rules: { enabled: false }
+#   serviceMonitor: { enabled: false }
+#   selfMonitoring: { enabled: false, lokiCanary: { enabled: false } }
