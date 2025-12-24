@@ -1,5 +1,5 @@
 # k8s/values/loki.yaml
-deploymentMode: SingleBinary
+deploymentMode: SimpleScalable
 
 global:
   extraEnvFrom:
@@ -7,8 +7,15 @@ global:
         name: loki-s3-credentials
 
 loki:
-  auth_enabled: true # ✅ Multitenancy Enabled
-  
+  auth_enabled: true 
+
+  limits_config:
+    max_query_series: 10000
+    max_entries_limit_per_query: 10000
+    cardinality_limit: 200000
+    split_queries_by_interval: 15m 
+    max_query_parallelism: 32
+
   commonConfig:
     replication_factor: 1
     ring:
@@ -35,19 +42,48 @@ loki:
           prefix: index_
           period: 24h
 
-singleBinary:
+# --- 🚀 SCALABLE COMPONENTS (1 Replica Each for Local) ---
+
+# 1. WRITE TARGET (Distributor + Ingester)
+# Handles incoming logs and pushes to S3
+write:
   replicas: 1
   persistence:
-    enabled: true
     size: 10Gi
-  # 💻 Laptop Sizing:
   resources:
-    requests:
-      cpu: 100m
-      memory: 512Mi
-    limits:
-      memory: 2Gi # Allowed to burst, but won't reserve it all
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 1Gi }
 
+# 2. READ TARGET (Query Frontend + Querier)
+# Handles Grafana queries and caching
+read:
+  replicas: 1
+  persistence:
+    size: 10Gi # Used for cache
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
+# 3. BACKEND TARGET (Ruler + Compactor + Index Gateway)
+# Handles alert rules, retention, and index compaction
+backend:
+  replicas: 1
+  persistence:
+    size: 10Gi
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
+# 4. GATEWAY (Nginx)
+gateway:
+  replicas: 1
+  ingress: { enabled: false }
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 128Mi }
+
+# --- MINIO (Embedded Storage) ---
+# We keep this enabled to persist S3 data locally
 minio:
   enabled: true
   rootUser: admin
@@ -70,18 +106,7 @@ minio:
     - name: tempo-data
       policy: none
 
-# Disable microservices
-write: { replicas: 0 }
-read: { replicas: 0 }
-backend: { replicas: 0 }
-
-gateway:
-  replicas: 1
-  ingress: { enabled: false } # 🚫 Ingress Disabled
-  resources:
-    requests: { cpu: 50m, memory: 64Mi }
-    limits: { memory: 256Mi }
-
+# Disable monitoring sidecars to save resources
 monitoring:
   dashboards: { enabled: false }
   rules: { enabled: false }

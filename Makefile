@@ -105,9 +105,8 @@ install-loki:
 	@echo "--- Installing Loki (with Embedded MinIO) ---"
 	cd terraform && terraform apply -auto-approve -target=kubectl_manifest.loki
 	@echo "⏳ Waiting for Loki & MinIO to initialize..."
-	@$(call wait_for_pods,observability-prd,app.kubernetes.io/name=loki)
-	@# Wait specifically for the 0th pod to be fully up (MinIO host)
-	@kubectl wait --for=condition=ready pod -n observability-prd loki-0 --timeout=300s
+	@# Generic wait for ALL pods in the namespace to be ready
+	@kubectl wait --for=condition=ready pod --all -n observability-prd --timeout=300s
 	@echo "✅ Loki (Storage Backend) is Ready."
 
 uninstall-loki:
