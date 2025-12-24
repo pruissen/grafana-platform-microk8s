@@ -1,4 +1,5 @@
 # k8s/values/loki.yaml
+# Architecture: Simple Scalable (Split Read/Write/Backend)
 deploymentMode: SimpleScalable
 
 global:
@@ -7,20 +8,28 @@ global:
         name: loki-s3-credentials
 
 loki:
-  auth_enabled: true 
+  auth_enabled: true
 
+  # ✅ ENABLE FEDERATION (Querying multiple tenants via A|B)
+  querier:
+    multi_tenant_queries_enabled: true
+
+  # ✅ INCREASE LIMITS (Standard configuration block)
   limits_config:
-    max_query_series: 10000
+    max_query_series: 100000       # High limit for federation
     max_entries_limit_per_query: 10000
-    cardinality_limit: 200000
-    split_queries_by_interval: 15m 
+    cardinality_limit: 200000      # Prevents 500 Errors in Label Browser
+    split_queries_by_interval: 15m # Performance optimization
     max_query_parallelism: 32
+    volume_enabled: true
 
   commonConfig:
     replication_factor: 1
     ring:
       kvstore:
         store: memberlist
+
+  # Storage Configuration (MinIO)
   storage:
     type: s3
     bucketNames:
@@ -42,10 +51,9 @@ loki:
           prefix: index_
           period: 24h
 
-# --- 🚀 SCALABLE COMPONENTS (1 Replica Each for Local) ---
+# --- 🚀 SCALABLE COMPONENTS (Laptop Optimized: 1 Replica) ---
 
-# 1. WRITE TARGET (Distributor + Ingester)
-# Handles incoming logs and pushes to S3
+# 1. WRITE TARGET (Ingestion)
 write:
   replicas: 1
   persistence:
@@ -54,18 +62,16 @@ write:
     requests: { cpu: 50m, memory: 256Mi }
     limits: { memory: 1Gi }
 
-# 2. READ TARGET (Query Frontend + Querier)
-# Handles Grafana queries and caching
+# 2. READ TARGET (Querying)
 read:
   replicas: 1
   persistence:
-    size: 10Gi # Used for cache
+    size: 10Gi # Required for cache
   resources:
     requests: { cpu: 50m, memory: 256Mi }
     limits: { memory: 1Gi }
 
-# 3. BACKEND TARGET (Ruler + Compactor + Index Gateway)
-# Handles alert rules, retention, and index compaction
+# 3. BACKEND TARGET (Compaction/Rules)
 backend:
   replicas: 1
   persistence:
@@ -81,9 +87,15 @@ gateway:
   resources:
     requests: { cpu: 20m, memory: 64Mi }
     limits: { memory: 128Mi }
+  
+  # ✅ CRITICAL FIX: Prevent Gateway Hang/Crash
+  # Explicitly tell Nginx where the new SimpleScalable services live.
+  nginxConfig:
+    customWriteUrl: "http://loki-write.observability-prd.svc.cluster.local:3100"
+    customReadUrl: "http://loki-read.observability-prd.svc.cluster.local:3100"
+    customBackendUrl: "http://loki-backend.observability-prd.svc.cluster.local:3100"
 
 # --- MINIO (Embedded Storage) ---
-# We keep this enabled to persist S3 data locally
 minio:
   enabled: true
   rootUser: admin

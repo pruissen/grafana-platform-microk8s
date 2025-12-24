@@ -1,3 +1,5 @@
+
+######### FILE BEGIN
 # 🔭 Local Observability Stack (LGTM + MinIO + Alloy)
 
 A production-ready, multi-tenant observability platform running locally on **K3s**. It uses **Terraform** for Infrastructure-as-Code and **ArgoCD** for GitOps deployment.
@@ -143,3 +145,4 @@ To completely wipe the cluster and start fresh:
 ```bash
 make nuke
 ```
+######### FILE END
