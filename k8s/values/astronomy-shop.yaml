@@ -8,11 +8,7 @@ default:
     - name: OTEL_SERVICE_NAME
       value: "astro-demo-app"
     - name: OTEL_COLLECTOR_NAME
-      value: "alloy-app-gateway.observability-prd.svc"
-    - name: OTEL_EXPORTER_OTLP_ENDPOINT
-      value: "http://alloy-app-gateway.observability-prd.svc:4318"
-    - name: OTEL_EXPORTER_OTLP_PROTOCOL
-      value: "http/protobuf"
+      value: "alloy-app-gateway.observability-prd.svc.cluster.local"
     - name: OTEL_RESOURCE_ATTRIBUTES
       value: "service.name=astro-demo-app,space=devteam-1,deployment.environment=production"
 
@@ -21,12 +17,13 @@ components:
   loadgenerator:
     enabled: true
     env:
-      - name: OTEL_EXPORTER_OTLP_ENDPOINT
-        value: "http://alloy-app-gateway.observability-prd.svc:4318"
-      - name: OTEL_EXPORTER_OTLP_PROTOCOL
-        value: "http/protobuf"
+      - name: OTEL_SERVICE_NAME
+        value: "astro-demo-app"
+      - name: OTEL_COLLECTOR_NAME
+        value: "alloy-app-gateway.observability-prd.svc.cluster.local"
       - name: OTEL_RESOURCE_ATTRIBUTES
         value: "service.name=astro-demo-app,space=devteam-1,deployment.environment=production"
+   
   frontendProxy:
     service:
       type: ClusterIP
