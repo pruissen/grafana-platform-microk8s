@@ -3,7 +3,7 @@
         install-all uninstall-all remove-all clean \
         clean-mimir clean-loki clean-tempo clean-grafana clean-alloy clean-faro clean-demo \
         uninstall-alloy-node uninstall-alloy-cluster uninstall-alloy-app-gateway uninstall-faro uninstall-node-exporter \
-        bootstrap forward nuke clean-legacy-alloy
+        bootstrap forward nuke clean-legacy-alloy secrets
 
 USER_NAME ?= $(shell whoami)
 NODE_IFACE ?= $(shell ip route get 1.1.1.1 | awk '{print $$5;exit}')
@@ -77,13 +77,18 @@ install-argocd:
 # 2. SEPARATE COMPONENTS & CLEANUP
 # ---------------------------------------------------------
 
+# ✅ NEW TARGET: Generate Secrets
+secrets:
+	@echo "--- 🔐 Ensuring Credentials Exist ---"
+	@chmod +x scripts/ensure-secrets.sh
+	@bash scripts/ensure-secrets.sh
+
 # --- PRE-REQUISITES (Secrets & KSM) ---
-install-prereqs:
+install-prereqs: secrets
 	@echo "--- Installing Secrets & KSM ---"
 	# ⚠️ Added kubernetes_namespace.observability to fix "not found" error
 	cd terraform && terraform apply -auto-approve \
 		-target=kubernetes_namespace.observability \
-		-target=random_password.minio_root_password \
 		-target=kubernetes_secret_v1.minio_creds \
 		-target=kubernetes_secret_v1.mimir_s3_creds \
 		-target=kubernetes_secret_v1.loki_s3_creds \

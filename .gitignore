@@ -5,6 +5,9 @@ terraform/*.tfstate.backup
 terraform/.terraform.lock.hcl
 terraform/crash.log
 
+# Secrets directory (Important!)
+secrets/
+
 # IDE & System
 .DS_Store
 .idea/

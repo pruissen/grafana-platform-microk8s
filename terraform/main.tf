@@ -78,10 +78,11 @@ resource "helm_release" "argocd" {
 # 4. SHARED SECRETS & CREDENTIALS
 # -------------------------------------------------------------------
 
-# A. Generate Random Password (Shared by all components)
-resource "random_password" "minio_root_password" {
-  length  = 24
-  special = false
+# ✅ CHANGED: Read password from local file instead of generating it here.
+# This prevents "Split-Brain" issues where Terraform state is lost but PVCs remain.
+locals {
+  # path.module is ./terraform, so we go up one level to find secrets/
+  minio_password = trimspace(file("${path.module}/../secrets/minio_password.txt"))
 }
 
 # B. Secret for MinIO Server (Used by Loki's Embedded MinIO)
@@ -92,7 +93,7 @@ resource "kubernetes_secret_v1" "minio_creds" {
   }
   data = {
     rootUser     = "admin"
-    rootPassword = random_password.minio_root_password.result
+    rootPassword = local.minio_password
   }
   type = "Opaque"
 }
@@ -105,7 +106,7 @@ resource "kubernetes_secret_v1" "mimir_s3_creds" {
   }
   data = {
     AWS_ACCESS_KEY_ID     = "admin"
-    AWS_SECRET_ACCESS_KEY = random_password.minio_root_password.result
+    AWS_SECRET_ACCESS_KEY = local.minio_password
   }
   type = "Opaque"
 }
@@ -117,7 +118,7 @@ resource "kubernetes_secret_v1" "loki_s3_creds" {
   }
   data = {
     AWS_ACCESS_KEY_ID     = "admin"
-    AWS_SECRET_ACCESS_KEY = random_password.minio_root_password.result
+    AWS_SECRET_ACCESS_KEY = local.minio_password
   }
   type = "Opaque"
 }
@@ -129,7 +130,7 @@ resource "kubernetes_secret_v1" "tempo_s3_creds" {
   }
   data = {
     AWS_ACCESS_KEY_ID     = "admin"
-    AWS_SECRET_ACCESS_KEY = random_password.minio_root_password.result
+    AWS_SECRET_ACCESS_KEY = local.minio_password
   }
   type = "Opaque"
 }
@@ -142,8 +143,6 @@ resource "helm_release" "ksm" {
   namespace  = "observability-prd"
   version    = "5.16.0"
 
-  # ✅ NEW: Expose all Node labels as metric labels
-  # This ensures 'kubernetes_io_hostname' and others appear in 'kube_node_info'
   set {
     name  = "metricLabelsAllowlist[0]"
     value = "nodes=[*]"

@@ -54,7 +54,7 @@ DASHBOARD_GROUPS = [
         "target_orgs": ["devteam-1"],
         "dashboards": [
             # Faro (Frontend Observability)
-            {"id": "17947", "type": "id", "folder": "Applications", "name": "Faro Web SDK (Frontend)"},
+            {"id": "17766", "type": "id", "folder": "Applications", "name": "Faro Web SDK (Frontend)"},
 
             # OpenTelemetry Demo
             {"name": "OTel Demo: General", "folder": "Applications", "type": "url", "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/refs/heads/main/src/grafana/provisioning/dashboards/demo/demo-dashboard.json"},
