@@ -3,84 +3,83 @@
 
 tempo:
   # ---------------------------------------------------------------------
-  # 1. MULTITENANCY & METRICS GENERATOR
+  # 1. MULTITENANCY & REPORTING
   # ---------------------------------------------------------------------
+  # Enable multi-tenancy so Tempo creates tenant-specific blocks in MinIO.
+  # This also ensures X-Scope-OrgID headers are forwarded to Mimir automatically.
   multitenancyEnabled: true
-  
-  # ✅ FIXED: Use full config structure to inject headers
+  reportingEnabled: false
+
+  # ---------------------------------------------------------------------
+  # 2. METRICS GENERATOR
+  # ---------------------------------------------------------------------
+  # We use the chart's built-in mechanism. Tempo automatically forwards
+  # the 'X-Scope-OrgID' from the trace to the Mimir write request.
   metricsGenerator:
     enabled: true
-    config:
-      storage:
-        remote_write:
-          - url: "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
-            headers:
-              X-Scope-OrgID: "devteam-1" # 👈 Required for Mimir Auth
-            send_exemplars: true
+    remoteWriteUrl: "http://mimir-nginx.observability-prd.svc:80/api/v1/push"
 
   # ---------------------------------------------------------------------
-  # 2. CONFIGURATION OVERRIDES
-  # ---------------------------------------------------------------------
-  overrides:
-    defaults:
-      metrics_generator:
-        processors:
-          - service-graphs  # <--- Generates Node Graph data
-          - span-metrics    # <--- Generates RED metrics (Rate, Error, Duration)
-
-  # ---------------------------------------------------------------------
-  # 3. STORAGE (S3 / MinIO)
+  # 3. STORAGE (MinIO/S3)
   # ---------------------------------------------------------------------
   storage:
     trace:
       backend: s3
       s3:
         bucket: tempo-data
-        # ✅ FIXED 1: No 'http://' prefix allowed by MinIO client
+        # MinIO endpoint within the cluster
         endpoint: loki-minio.observability-prd.svc:9000
-        # ✅ FIXED 2: 'insecure: true' tells the client to use HTTP (instead of HTTPS)
+        # insecure: true is required for internal HTTP MinIO
         insecure: true
-        # ✅ FIXED 3: 'forcepathstyle' (lowercase, no underscore) fixes the DNS bucket resolution
+        # forcepathstyle: true is required for MinIO
         forcepathstyle: true
       wal:
         path: /var/tempo/wal
 
   # ---------------------------------------------------------------------
-  # 5. CREDENTIALS (Nested Safety)
+  # 4. CREDENTIALS (⚠️ CRITICAL FIX: MUST BE NESTED UNDER 'tempo')
   # ---------------------------------------------------------------------
+  # This injects AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY env vars
+  # which the MinIO/S3 client automatically detects.
   extraEnvFrom:
     - secretRef:
         name: tempo-s3-credentials
 
   # ---------------------------------------------------------------------
-  # 6. PROBES (Startup Stability Fix)
+  # 5. RESOURCES & PROBES
   # ---------------------------------------------------------------------
-  # Tempo 2.9+ Compactor Ring initialization takes ~60s.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+  # Increase timeouts to allow Tempo time to initialize the Ring
   livenessProbe:
-    initialDelaySeconds: 120
+    initialDelaySeconds: 30
     periodSeconds: 15
     timeoutSeconds: 5
     failureThreshold: 3
 
   readinessProbe:
-    initialDelaySeconds: 60
+    initialDelaySeconds: 30
     periodSeconds: 15
     timeoutSeconds: 5
     failureThreshold: 3
 
   # ---------------------------------------------------------------------
-  # 7. RESOURCES
+  # 6. SERVER CONFIG
   # ---------------------------------------------------------------------
-  resources:
-    requests:
-      cpu: 50m
-      memory: 128Mi
-    limits:
-      memory: 512Mi
+  server:
+    http_listen_port: 3200
 
-# -----------------------------------------------------------------------
-# 8. CREDENTIALS INJECTION (Root Level)
-# -----------------------------------------------------------------------
-extraEnvFrom:
-  - secretRef:
-      name: tempo-s3-credentials
+  # ---------------------------------------------------------------------
+  # 7. OVERRIDES (Processors)
+  # ---------------------------------------------------------------------
+  overrides:
+    defaults:
+      metrics_generator:
+        processors:
+          - service-graphs
+          - span-metrics
